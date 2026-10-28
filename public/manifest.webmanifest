@@ -1,0 +1,25 @@
+{
+  "name": "芭蕾手账",
+  "short_name": "芭蕾手账",
+  "description": "记录芭蕾练习时长、笔记与地图",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fdf2f6",
+  "theme_color": "#c2185b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
