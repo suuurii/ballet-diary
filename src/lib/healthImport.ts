@@ -1,11 +1,10 @@
 import JSZip from 'jszip'
-import type { RecordSource } from '../db'
 
 export interface ImportedWorkout {
   startAt: number
   endAt: number
   durationMin: number
-  source: RecordSource
+  source: 'watch'
   note: string
 }
 

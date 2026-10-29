@@ -1,13 +1,13 @@
 {
   "name": "芭蕾手账",
   "short_name": "芭蕾手账",
-  "description": "记录芭蕾练习时长、笔记与地图",
+  "description": "记录芭蕾练习、笔记与去过的舞房",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#fdf2f6",
-  "theme_color": "#c2185b",
+  "background_color": "#f7f2f1",
+  "theme_color": "#f7f2f1",
   "icons": [
     {
       "src": "/icon.svg",
