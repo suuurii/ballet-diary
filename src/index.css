@@ -159,6 +159,160 @@ img {
   background: var(--line-soft);
 }
 
+/* ---------- 今年进度 ---------- */
+
+.goal {
+  margin: 0 0 24px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.goal-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.goal-track::-webkit-scrollbar {
+  display: none;
+}
+
+.goal-slide {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  padding: 13px 16px 10px;
+}
+
+.goal-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 6px;
+}
+
+.goal-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 26px;
+  background: none;
+}
+
+.goal-dot i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: width 0.2s ease, background 0.2s ease;
+}
+
+.goal-dot-on i {
+  width: 16px;
+  border-radius: 3px;
+  background: var(--ink-3);
+}
+
+.goal-aside {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.goal-foot {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+
+.goal-foot .goal-bar {
+  flex: 1;
+}
+
+.goal-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.goal-label {
+  margin: 0;
+  letter-spacing: 0.14em;
+}
+
+.goal-sessions {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.goal-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 0 11px;
+}
+
+.goal-hours {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.goal-hours b {
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.goal-edit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -14px -4px -14px 0;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.goal-edit:active {
+  color: var(--ink);
+}
+
+.goal-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--heat-0);
+  overflow: hidden;
+}
+
+.goal-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--rose);
+  transition: width 0.4s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-bar i {
+    transition: none;
+  }
+}
+
 /* ---------- 月份 ---------- */
 
 .month-head {
@@ -218,7 +372,7 @@ img {
 }
 
 .back-today {
-  margin-left: auto;
+  margin-left: 2px;
   font-size: 12px;
   color: var(--rose);
   border-bottom: 1px solid var(--rose-soft);
@@ -303,7 +457,7 @@ img {
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
-  margin: 12px 2px 0;
+  margin-left: auto;
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
@@ -460,6 +614,11 @@ img {
   color: var(--ink-3);
   font-size: 13.5px;
   line-height: 1.8;
+}
+
+.empty-home {
+  padding: 2px 2px 40px;
+  text-align: center;
 }
 
 .empty-block {
@@ -1064,6 +1223,25 @@ img {
 .num-input:focus {
   outline: none;
   border-color: var(--rose);
+}
+
+.sheet-compact {
+  max-height: 82dvh;
+}
+
+.goal-input-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 10px 0 4px;
+  font-size: 14px;
+  color: var(--ink-3);
+}
+
+.num-lg {
+  width: 132px;
+  padding: 10px 14px;
+  font-size: 28px;
 }
 
 .tag-box {

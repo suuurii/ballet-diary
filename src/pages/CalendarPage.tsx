@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db, type Category, type Entry, type Movement } from '../db'
 import { entriesOnDay, frequentDurations, sumByDay } from '../lib/entries'
-import { formatDuration, formatHours, monthCN, startOfDay, weekdayCN } from '../lib/time'
+import { allTimeStats, getYearGoal, yearStats } from '../lib/goal'
+import { formatHours, monthCN, startOfDay } from '../lib/time'
 import { MonthCalendar } from '../components/MonthCalendar'
 import { EntrySheet } from '../components/EntrySheet'
+import { YearProgress } from '../components/YearProgress'
+import { GoalSheet } from '../components/GoalSheet'
 import { Toast } from '../components/Toast'
 import { useToast } from '../hooks/useToast'
 
@@ -22,19 +25,24 @@ export function CalendarPage() {
     return { year: d.getFullYear(), month: d.getMonth() }
   })
   const [sheet, setSheet] = useState<SheetState | null>(null)
+  const [goalHours, setGoalHours] = useState<number | null>(null)
+  const [goalOpen, setGoalOpen] = useState(false)
   const { msg, show } = useToast()
 
   const today = startOfDay(Date.now())
+  const year = new Date().getFullYear()
 
   async function load() {
-    const [es, cs, ms] = await Promise.all([
+    const [es, cs, ms, goal] = await Promise.all([
       db.entries.toArray(),
       db.categories.orderBy('order').toArray(),
       db.movements.toArray(),
+      getYearGoal(),
     ])
     setEntries(es)
     setCategories(cs)
     setMovements(ms)
+    setGoalHours(goal)
   }
 
   useEffect(() => {
@@ -57,6 +65,8 @@ export function CalendarPage() {
   const monthMinutes = monthEntries.reduce((s, e) => s + e.durationMin, 0)
   const monthDays = new Set(monthEntries.filter((e) => e.durationMin > 0).map((e) => e.date)).size
   const frequent = useMemo(() => frequentDurations(entries), [entries])
+  const stats = useMemo(() => yearStats(entries, year), [entries, year])
+  const allTime = useMemo(() => allTimeStats(entries), [entries])
 
   const move = (delta: number) => {
     setCursor((c) => {
@@ -66,13 +76,6 @@ export function CalendarPage() {
   }
 
   const isCurrentMonth = cursor.year === new Date().getFullYear() && cursor.month === new Date().getMonth()
-
-  function movementNames(e: Entry): string {
-    return e.movementIds
-      .map((id) => movements.find((m) => m.id === id)?.name)
-      .filter(Boolean)
-      .join(' · ')
-  }
 
   return (
     <div className="page">
@@ -85,6 +88,17 @@ export function CalendarPage() {
           </svg>
         </Link>
       </header>
+
+      <YearProgress
+        year={year}
+        yearMinutes={stats.minutes}
+        yearSessions={stats.sessions}
+        totalMinutes={allTime.minutes}
+        totalSessions={allTime.sessions}
+        firstDate={allTime.firstDate}
+        goalHours={goalHours}
+        onEditGoal={() => setGoalOpen(true)}
+      />
 
       <section className="month-head">
         <div>
@@ -114,6 +128,13 @@ export function CalendarPage() {
             回到本月
           </button>
         )}
+        <span className="heat-legend">
+          <span>少</span>
+          {[1, 2, 3, 4].map((l) => (
+            <i key={l} data-level={l} />
+          ))}
+          <span>多</span>
+        </span>
       </p>
 
       <MonthCalendar
@@ -124,56 +145,15 @@ export function CalendarPage() {
         onSelect={(day) => setSheet({ date: day })}
       />
 
-      <div className="heat-legend">
-        <span>少</span>
-        {[1, 2, 3, 4].map((l) => (
-          <i key={l} data-level={l} />
-        ))}
-        <span>多</span>
-      </div>
-
       <button className="cta" onClick={() => setSheet({ date: today })}>
         ＋ 记一笔
       </button>
 
-      <section className="month-list">
-        <h2 className="section-label">{isCurrentMonth ? '这个月' : `${cursor.month + 1} 月`}</h2>
-        {monthEntries.length === 0 ? (
-          <p className="empty">
-            还没有记录。点日历上任意一天，或者「记一笔」开始。
-          </p>
-        ) : (
-          monthEntries.map((e) => {
-            const cat = categories.find((c) => c.id === e.categoryId)
-            const names = movementNames(e)
-            const preview = e.note.trim().split('\n')[0]
-            return (
-              <button
-                key={e.id}
-                className="entry-row"
-                onClick={() => setSheet({ date: e.date, entry: e })}
-              >
-                <span className="entry-day">
-                  <b>{new Date(e.date).getDate()}</b>
-                  <i>{weekdayCN(e.date)}</i>
-                </span>
-                <span className="entry-main">
-                  <span className="entry-line">
-                    {cat && <i className="dot" style={{ background: cat.color }} />}
-                    <span className="entry-title">{names || cat?.name || '练习'}</span>
-                  </span>
-                  {preview && <span className="entry-note">{preview}</span>}
-                </span>
-                {e.durationMin > 0 ? (
-                  <span className="entry-dur">{formatDuration(e.durationMin)}</span>
-                ) : (
-                  <span className="entry-dur entry-dur-quiet">笔记</span>
-                )}
-              </button>
-            )
-          })
-        )}
-      </section>
+      {entries.length === 0 && (
+        <p className="empty empty-home">
+          还没有记录。点日历上任意一天，或者「记一笔」开始。
+        </p>
+      )}
 
       {sheet && (
         <EntrySheet
@@ -187,6 +167,19 @@ export function CalendarPage() {
           onClose={() => setSheet(null)}
           onSaved={(m) => {
             setSheet(null)
+            load()
+            show(m)
+          }}
+        />
+      )}
+
+      {goalOpen && (
+        <GoalSheet
+          year={year}
+          goalHours={goalHours}
+          onClose={() => setGoalOpen(false)}
+          onSaved={(m) => {
+            setGoalOpen(false)
             load()
             show(m)
           }}

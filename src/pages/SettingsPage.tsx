@@ -76,11 +76,12 @@ export function SettingsPage() {
   async function exportData() {
     setBusy('正在打包…')
     try {
-      const [cats, moves, entries, places] = await Promise.all([
+      const [cats, moves, entries, places, settings] = await Promise.all([
         db.categories.toArray(),
         db.movements.toArray(),
         db.entries.toArray(),
         db.places.toArray(),
+        db.settings.toArray(),
       ])
       const data = {
         app: 'ballet-diary',
@@ -100,6 +101,7 @@ export function SettingsPage() {
             photos: await Promise.all(p.photos.map((b) => blobToDataURL(b))),
           })),
         ),
+        settings,
       }
       const blob = new Blob([JSON.stringify(data)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
@@ -181,6 +183,10 @@ export function SettingsPage() {
           visitedAt: p.visitedAt || Date.now(),
           createdAt: p.createdAt || Date.now(),
         })
+      }
+
+      for (const s of data.settings || []) {
+        if (s?.key) await db.settings.put({ key: s.key, value: s.value ?? null })
       }
 
       await load()

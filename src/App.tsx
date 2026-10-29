@@ -4,7 +4,6 @@ import { ensureSeedCategories } from './lib/categories'
 import { migrateLegacy } from './lib/migrate'
 import { CalendarPage } from './pages/CalendarPage'
 import { NotesPage } from './pages/NotesPage'
-import { PlacesPage } from './pages/PlacesPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 function Icon({ children }: { children: ReactNode }) {
@@ -49,17 +48,6 @@ const TABS = [
       </Icon>
     ),
   },
-  {
-    to: '/places',
-    label: '场所',
-    end: false,
-    icon: (
-      <Icon>
-        <path d="M20 10.2c0 6.3-8 11.3-8 11.3s-8-5-8-11.3a8 8 0 0 1 16 0z" />
-        <circle cx="12" cy="10" r="2.8" />
-      </Icon>
-    ),
-  },
 ]
 
 export default function App() {
@@ -88,7 +76,6 @@ export default function App() {
         <Routes>
           <Route path="/" element={<CalendarPage />} />
           <Route path="/notes" element={<NotesPage />} />
-          <Route path="/places" element={<PlacesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

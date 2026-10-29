@@ -28,6 +28,12 @@ export interface Entry {
   createdAt: number
 }
 
+/** 杂项设置（比如今年的练习目标），一个 key 存一条 */
+export interface Setting {
+  key: string
+  value: string | number | boolean | null
+}
+
 export type PlaceType = 'studio' | 'shop' | 'other'
 
 export interface Place {
@@ -69,6 +75,7 @@ class BalletDB extends Dexie {
   movements!: Table<Movement, number>
   entries!: Table<Entry, number>
   places!: Table<Place, number>
+  settings!: Table<Setting, string>
   practiceRecords!: Table<LegacyPracticeRecord, number>
   notes!: Table<LegacyNote, number>
 
@@ -89,6 +96,9 @@ class BalletDB extends Dexie {
       notes: '++id, movementId, createdAt',
       entries: '++id, date, categoryId, *movementIds, source, createdAt',
       places: '++id, visitedAt, type',
+    })
+    this.version(4).stores({
+      settings: 'key',
     })
   }
 }
