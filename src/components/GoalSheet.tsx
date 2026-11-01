@@ -1,20 +1,25 @@
 import { useState } from 'react'
-import { setYearGoal } from '../lib/goal'
+import { setYearGift, setYearGoal } from '../lib/goal'
+import { t, useLang } from '../lib/i18n'
 
-/** 设/改今年的练习目标，一个小抽屉就够 */
+/** 设/改今年的练习目标，一个小抽屉就够；顺手写一句达成后给自己的礼物 */
 export function GoalSheet({
   year,
   goalHours,
+  giftText,
   onClose,
   onSaved,
 }: {
   year: number
   goalHours: number | null
+  giftText: string
   onClose: () => void
   onSaved: (msg: string) => void
 }) {
   const [value, setValue] = useState(goalHours ? String(goalHours) : '')
+  const [gift, setGift] = useState(giftText)
   const [busy, setBusy] = useState(false)
+  useLang()
 
   async function save() {
     if (busy) return
@@ -23,10 +28,12 @@ export function GoalSheet({
     try {
       if (!value.trim() || !Number.isFinite(n) || n <= 0) {
         await setYearGoal(null)
-        onSaved('目标已取消')
+        await setYearGift(gift)
+        onSaved(t('目标已取消', 'Goal cleared'))
       } else {
         await setYearGoal(Math.round(n))
-        onSaved('目标已保存')
+        await setYearGift(gift)
+        onSaved(t('目标已保存', 'Goal saved'))
       }
     } finally {
       setBusy(false)
@@ -39,10 +46,10 @@ export function GoalSheet({
         <div className="sheet-grip" />
         <header className="sheet-head">
           <div>
-            <div className="sheet-kicker">{year} 年</div>
-            <h2 className="sheet-title">今年想练多少小时</h2>
+            <div className="sheet-kicker">{t(`${year} 年`, `Year ${year}`)}</div>
+            <h2 className="sheet-title">{t('今年想练多少小时', 'Hours for this year')}</h2>
           </div>
-          <button className="sheet-close" onClick={onClose} aria-label="关闭">
+          <button className="sheet-close" onClick={onClose} aria-label={t('关闭', 'Close')}>
             ×
           </button>
         </header>
@@ -61,16 +68,34 @@ export function GoalSheet({
             }}
             autoFocus
           />
-          <span>小时</span>
+          <span className="goal-unit">{t('小时', 'hours')}</span>
         </div>
 
-        <p className="sheet-hint">
-          进度按今年记下的总时长算。留空保存就是不设目标。
+        <p className="sheet-note">
+          {t(
+            '进度按今年记下的总时长算。留空保存就是不设目标。',
+            'Progress counts this year’s practice. Save it empty to remove the goal.',
+          )}
         </p>
+
+        <label className="goal-gift-field">
+          <span className="label">{t('达成后送自己什么', 'Your reward when you get there')}</span>
+          <input
+            className="input"
+            type="text"
+            maxLength={24}
+            placeholder={t('比如：一双新的足尖鞋', 'e.g. a new pair of pointe shoes')}
+            value={gift}
+            onChange={(e) => setGift(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save()
+            }}
+          />
+        </label>
 
         <div className="sheet-actions">
           <button className="btn btn-primary" onClick={save} disabled={busy}>
-            保存目标
+            {t('保存目标', 'Save goal')}
           </button>
         </div>
       </div>

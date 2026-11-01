@@ -1,6 +1,8 @@
-import { dayKey, monthGrid, startOfDay } from '../lib/time'
+import { t, useLang } from '../lib/i18n'
+import { dayKey, formatDateCN, hoursShort, monthGrid, startOfDay } from '../lib/time'
 
-const WEEK = ['一', '二', '三', '四', '五', '六', '日']
+const WEEK_ZH = ['一', '二', '三', '四', '五', '六', '日']
+const WEEK_EN = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
 /** 0–4 档深浅 */
 function heatLevel(min: number): number {
@@ -16,22 +18,27 @@ export function MonthCalendar({
   month,
   totals,
   selected,
+  giftDay,
   onSelect,
 }: {
   year: number
   month: number
   totals: Map<number, number>
   selected: number | null
+  /** 今年第一次练够目标的那天，格子上留个小礼物 */
+  giftDay?: number | null
   onSelect: (day: number) => void
 }) {
+  const lang = useLang()
+  const WEEK = lang === 'en' ? WEEK_EN : WEEK_ZH
   const cells = monthGrid(year, month)
   const today = startOfDay(Date.now())
 
   return (
     <div className="cal">
       <div className="cal-week" aria-hidden="true">
-        {WEEK.map((w) => (
-          <span key={w}>{w}</span>
+        {WEEK.map((w, i) => (
+          <span key={i}>{w}</span>
         ))}
       </div>
       <div className="cal-grid">
@@ -50,9 +57,15 @@ export function MonthCalendar({
               }
               data-level={heatLevel(min)}
               onClick={() => onSelect(ts)}
-              aria-label={`${month + 1} 月 ${day} 日${min > 0 ? `，${min} 分钟` : ''}`}
+              aria-label={`${formatDateCN(ts)}${min > 0 ? t(`，${min} 分钟`, `, ${min} min`) : ''}`}
             >
-              {day}
+              <span className="cal-num">{day}</span>
+              {min > 0 && <span className="cal-hours">{hoursShort(min)}</span>}
+              {ts === giftDay && (
+                <span className="cal-gift" aria-hidden="true">
+                  🩰
+                </span>
+              )}
             </button>
           )
         })}

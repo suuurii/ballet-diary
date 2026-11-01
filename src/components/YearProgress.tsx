@@ -1,15 +1,19 @@
 import { useRef, useState } from 'react'
-import { hoursText } from '../lib/goal'
+import { hoursText, type YearGift } from '../lib/goal'
+import { money, type SpendCat } from '../lib/spend'
+import { formatDateCN } from '../lib/time'
+import { getLang, t, useLang } from '../lib/i18n'
 
 function ymd(ts: number): string {
   const d = new Date(ts)
+  if (getLang() === 'en') return formatDateCN(ts)
   return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`
 }
 
 /**
  * 一张卡，左右滑两页：
- *   第 1 页 累计练习（全部时间）
- *   第 2 页 今年的练习进度（对着自己设的目标）
+ *   第 1 页 今年的练习进度（对着自己设的目标）
+ *   第 2 页 累计练习（全部时间）
  */
 export function YearProgress({
   year,
@@ -19,7 +23,12 @@ export function YearProgress({
   totalSessions,
   firstDate,
   goalHours,
+  gift,
+  spendTotal,
+  spendCats,
   onEditGoal,
+  onClaimGift,
+  onOpenSpend,
 }: {
   year: number
   yearMinutes: number
@@ -28,14 +37,20 @@ export function YearProgress({
   totalSessions: number
   firstDate: number | null
   goalHours: number | null
+  gift: YearGift
+  spendTotal: number
+  spendCats: SpendCat[]
   onEditGoal: () => void
+  onClaimGift: () => void
+  onOpenSpend: () => void
 }) {
+  useLang()
   const [page, setPage] = useState(0)
   const trackRef = useRef<HTMLDivElement>(null)
 
   const yearHours = yearMinutes / 60
   const pct = goalHours ? Math.round((yearHours / goalHours) * 100) : 0
-  const avgMin = totalSessions > 0 ? Math.round(totalMinutes / totalSessions) : 0
+  const reached = !!goalHours && yearMinutes >= goalHours * 60
 
   function onScroll() {
     const el = trackRef.current
@@ -51,38 +66,24 @@ export function YearProgress({
   }
 
   return (
-    <section className="goal" aria-label="练习时长">
+    <section className="goal" aria-label={t('练习时长', 'Practice time')}>
       <div className="goal-track" ref={trackRef} onScroll={onScroll}>
         <div className="goal-slide">
           <div className="goal-top">
-            <span className="label goal-label">累计练习</span>
-            <span className="goal-sessions">{totalSessions} 次练习</span>
-          </div>
-
-          <div className="goal-main">
-            <span className="goal-hours">
-              <b>{hoursText(totalMinutes)}</b> 小时
+            <span className="label goal-label">{t('今年', 'This year')} · {year}</span>
+            <span className="goal-sessions">
+              {t(`${yearSessions} 次练习`, `${yearSessions} sessions`)}
             </span>
-            {totalSessions > 0 && <span className="goal-aside">平均 {avgMin} 分钟</span>}
-          </div>
-
-          <div className="goal-foot">
-            {firstDate ? `从 ${ymd(firstDate)} 开始` : '还没有记过练习时长'}
-          </div>
-        </div>
-
-        <div className="goal-slide">
-          <div className="goal-top">
-            <span className="label goal-label">今年 · {year}</span>
-            <span className="goal-sessions">{yearSessions} 次练习</span>
           </div>
 
           <div className="goal-main">
             <span className="goal-hours">
-              <b>{hoursText(yearMinutes)}</b> 小时
+              <b>{hoursText(yearMinutes)}</b>h
             </span>
             <button className="goal-edit" onClick={onEditGoal}>
-              {goalHours ? `目标 ${goalHours} 小时 · ${pct}%` : '设一个目标 ›'}
+              {goalHours
+                ? t(`目标 ${goalHours}h · ${pct}%`, `Goal ${goalHours}h · ${pct}%`)
+                : t('设一个目标 ›', 'Set a goal ›')}
             </button>
           </div>
 
@@ -93,10 +94,74 @@ export function YearProgress({
               aria-valuenow={Math.min(pct, 100)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="今年练习目标进度"
+              aria-label={t('今年练习目标进度', 'Yearly goal progress')}
             >
               <i style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
             </div>
+          </div>
+
+          {/* 目标达成后，这里就是那份礼物 */}
+          {reached ? (
+            <div className="goal-gift">
+              <span className="goal-gift-mark" aria-hidden="true">
+                🩰
+              </span>
+              <span className="goal-gift-text">
+                {gift.text || t('今年的目标达成了', 'This year’s goal is done')}
+              </span>
+              {gift.text && !gift.claimedAt && (
+                <button className="goal-gift-act" onClick={onClaimGift}>
+                  {t('收下', 'Claim')}
+                </button>
+              )}
+              {gift.text && gift.claimedAt && <span className="goal-gift-done">{t('已收下', 'Claimed')}</span>}
+              {!gift.text && (
+                <button className="goal-gift-act" onClick={onEditGoal}>
+                  {t('挑一份 ›', 'Pick one ›')}
+                </button>
+              )}
+            </div>
+          ) : gift.text ? (
+            <div className="goal-gift goal-gift-quiet">
+              <span className="goal-gift-mark" aria-hidden="true">
+                🩰
+              </span>
+              <span className="goal-gift-text">
+                {t('达成后：', 'When reached: ')}
+                {gift.text}
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="goal-slide">
+          {/* 左边练习、右边投入：标签一线、数字一线、小字一线，左右同一个格式 */}
+          <div className="goal-top">
+            <span className="label goal-label">{t('累计练习', 'All time')}</span>
+            <span className="label goal-label">{t('累计投入', 'Spent')}</span>
+          </div>
+
+          <div className="goal-main">
+            <span className="goal-hours">
+              <b>{hoursText(totalMinutes)}</b>h
+            </span>
+            {/* 钱和时长分开记，这里只汇总一个总数，点开看流水 */}
+            <button className="goal-hours goal-money" onClick={onOpenSpend}>
+              {spendTotal > 0 ? <b>{money(spendTotal)}</b> : t('记一笔 ›', 'Add ›')}
+            </button>
+          </div>
+
+          <div className="goal-foot goal-foot-split">
+            <span>
+              {t(`${totalSessions} 次`, `${totalSessions} sessions`)}
+              {firstDate ? t(` · 从 ${ymd(firstDate)} 开始`, ` · since ${ymd(firstDate)}`) : ''}
+            </span>
+            {spendCats.length > 0 && (
+              <span className="spend-hint">
+                {spendCats[0].name} {money(spendCats[0].amount)}
+                {spendCats.length > 1 && ` ＋${spendCats.length - 1}`}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -107,7 +172,7 @@ export function YearProgress({
             key={i}
             className={'goal-dot' + (page === i ? ' goal-dot-on' : '')}
             onClick={() => go(i)}
-            aria-label={i === 0 ? '累计练习' : '今年练习'}
+            aria-label={i === 0 ? t('今年练习', 'This year') : t('累计练习', 'All time')}
           >
             <i />
           </button>

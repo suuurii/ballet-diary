@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import { db, type Category, type Entry, type Movement } from '../db'
 import { entriesOnDay, frequentDurations, isNote } from '../lib/entries'
-import { formatDuration, fromDateInput, monthCN, weekdayCN } from '../lib/time'
+import { formatDuration, fromDateInput, monthCN, pad2, startOfDay, weekdayCN } from '../lib/time'
 import { useBlobUrls } from '../hooks/useBlobUrls'
 import { EntrySheet } from '../components/EntrySheet'
+import { ExportCardSheet } from '../components/ExportCardSheet'
+import { LangToggle } from '../components/LangToggle'
 import { Toast } from '../components/Toast'
 import { useToast } from '../hooks/useToast'
+import { t, useLang } from '../lib/i18n'
+import { displayMove } from '../lib/movements'
 
 type TimeFilter = 'thisMonth' | 'lastMonth' | 'thisYear' | 'all' | 'custom'
 
-const TIME_LABEL: Record<TimeFilter, string> = {
-  thisMonth: '本月',
-  lastMonth: '上月',
-  thisYear: '今年',
-  all: '全部',
-  custom: '自定义',
+const TIME_LABEL: Record<TimeFilter, [string, string]> = {
+  thisMonth: ['本月', 'This month'],
+  lastMonth: ['上月', 'Last month'],
+  thisYear: ['今年', 'This year'],
+  all: ['全部', 'All'],
+  custom: ['自定义', 'Custom'],
 }
 
 function inRange(e: Entry, filter: TimeFilter, from: string, to: string): boolean {
@@ -43,20 +47,44 @@ function NoteCard({
   entry,
   movements,
   categories,
+  picked,
   onOpen,
   onView,
 }: {
   entry: Entry
   movements: Movement[]
   categories: Category[]
+  /** 筛了动作就只展开这几个动作的要点，整节课的话压暗 */
+  picked: Set<number>
   onOpen: () => void
   onView: (url: string) => void
 }) {
   const urls = useBlobUrls(entry.images)
   const names = entry.movementIds
     .map((id) => movements.find((m) => m.id === id)?.name)
-    .filter(Boolean)
+    .filter((n): n is string => !!n)
+    .map(displayMove)
   const cat = categories.find((c) => c.id === entry.categoryId)
+
+  const byMove = new Map<number, { text: string; level: number }[]>()
+  for (const p of entry.points || []) {
+    const line = { text: p.text, level: p.level === 1 ? 1 : 0 }
+    const arr = byMove.get(p.movementId)
+    if (arr) arr.push(line)
+    else byMove.set(p.movementId, [line])
+  }
+  const allBlocks = [...byMove.entries()]
+    .map(([id, lines]) => ({
+      id,
+      name: displayMove(movements.find((m) => m.id === id)?.name || t('动作', 'Movement')),
+      lines,
+    }))
+    .sort((a, b) => entry.movementIds.indexOf(a.id) - entry.movementIds.indexOf(b.id))
+  const blocks = picked.size > 0 ? allBlocks.filter((b) => picked.has(b.id)) : allBlocks
+  const classLines = entry.note
+    .split('\n')
+    .map((t) => t.trim())
+    .filter(Boolean)
 
   return (
     <article className="note" onClick={onOpen}>
@@ -66,7 +94,10 @@ function NoteCard({
           <i>{weekdayCN(entry.date)}</i>
         </span>
         <span className="note-meta">
-          {names.length > 0 && <span className="note-moves">{names.join(' · ')}</span>}
+          {/* 下面按动作分段时不再重复列名字 */}
+          {names.length > 0 && allBlocks.length === 0 && (
+            <span className="note-moves">{names.join(' · ')}</span>
+          )}
           {entry.durationMin > 0 && (
             <span className="note-dur">{formatDuration(entry.durationMin)}</span>
           )}
@@ -78,7 +109,32 @@ function NoteCard({
           )}
         </span>
       </header>
-      {entry.note && <p className="note-text">{entry.note}</p>}
+      {blocks.length > 0 && (
+        <div className="note-points">
+          {blocks.map((b) => (
+            <div className="note-points-block" key={b.id}>
+              <div className="note-points-title">{b.name}</div>
+              <ul>
+                {b.lines.map((line, i) => (
+                  <li key={i} className={line.level > 0 ? 'is-sub' : undefined}>
+                    {line.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 以前写在「这节课」里的文字，现在只作为这条记录的话显示，不再有标题 */}
+      {classLines.length > 0 && (
+        <div className={'note-points' + (picked.size > 0 ? ' is-muted' : '')}>
+          <ul>
+            {classLines.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {urls.length > 0 && (
         <div className="note-photos">
           {urls.map((u, i) => (
@@ -107,7 +163,10 @@ export function NotesPage() {
   const [to, setTo] = useState('')
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [sheet, setSheet] = useState<Entry | null>(null)
+  // 从笔记页也能直接记一笔，默认记在今天
+  const [adding, setAdding] = useState<number | null>(null)
   const [viewing, setViewing] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const { msg, show } = useToast()
 
   async function load() {
@@ -135,6 +194,19 @@ export function NotesPage() {
 
   const frequent = useMemo(() => frequentDurations(entries), [entries])
 
+  // 导出时写在卡片标题上的时间范围
+  const rangeLabel = useMemo(() => {
+    const now = new Date()
+    if (filter === 'thisMonth') return `${now.getFullYear()}.${pad2(now.getMonth() + 1)}`
+    if (filter === 'lastMonth') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      return `${d.getFullYear()}.${pad2(d.getMonth() + 1)}`
+    }
+    if (filter === 'thisYear') return t(`${now.getFullYear()} 年`, `${now.getFullYear()}`)
+    if (filter === 'all') return t('全部笔记', 'All notes')
+    return `${from || t('最早', 'start')} — ${to || t('今天', 'today')}`
+  }, [filter, from, to])
+
   function toggle(id: number) {
     setPicked((prev) => {
       const next = new Set(prev)
@@ -145,24 +217,36 @@ export function NotesPage() {
   }
 
   let lastGroup = ''
+  useLang()
 
   return (
     <div className="page">
       <header className="topbar">
-        <span className="wordmark">芭蕾手账</span>
+        <span className="wordmark">{t('芭蕾手账', 'BALLET JOURNAL')}</span>
+        <div className="topbar-tools">
+          <LangToggle inline />
+          <button className="topbar-action" onClick={() => setAdding(startOfDay(Date.now()))}>
+            {t('＋ 记一笔', '＋ New entry')}
+          </button>
+        </div>
       </header>
 
-      <h1 className="page-title">笔记</h1>
-      <p className="page-sub">这个月写了什么，练到哪个动作卡住，都在这里。</p>
+      <h1 className="page-title">{t('笔记', 'Notes')}</h1>
+      <p className="page-sub">
+        {t(
+          '这个月写了什么，练到哪个动作卡住，都在这里。',
+          'What you wrote this month, and where each movement got stuck.',
+        )}
+      </p>
 
       <div className="chips chips-scroll filter-row">
-        {(Object.keys(TIME_LABEL) as TimeFilter[]).map((t) => (
+        {(Object.keys(TIME_LABEL) as TimeFilter[]).map((key) => (
           <button
-            key={t}
-            className={'chip' + (filter === t ? ' chip-on' : '')}
-            onClick={() => setFilter(t)}
+            key={key}
+            className={'chip' + (filter === key ? ' chip-on' : '')}
+            onClick={() => setFilter(key)}
           >
-            {TIME_LABEL[t]}
+            {t(TIME_LABEL[key][0], TIME_LABEL[key][1])}
           </button>
         ))}
       </div>
@@ -191,7 +275,7 @@ export function NotesPage() {
             className={'chip chip-quiet' + (picked.size === 0 ? ' chip-on' : '')}
             onClick={() => setPicked(new Set())}
           >
-            全部动作
+            {t('全部动作', 'All movements')}
           </button>
           {movements.map((m) => (
             <button
@@ -199,16 +283,30 @@ export function NotesPage() {
               className={'chip chip-quiet' + (picked.has(m.id!) ? ' chip-on' : '')}
               onClick={() => toggle(m.id!)}
             >
-              {m.name}
+              {displayMove(m.name)}
             </button>
           ))}
         </div>
       )}
 
-      <p className="count">{notes.length} 条笔记</p>
+      <div className="notes-tools">
+        <span className="count">
+          {t(`${notes.length} 条笔记`, `${notes.length} notes`)}
+        </span>
+        {notes.length > 0 && (
+          <button className="notes-export" onClick={() => setExporting(true)}>
+            {t('导出卡片 ›', 'Export cards ›')}
+          </button>
+        )}
+      </div>
 
       {notes.length === 0 ? (
-        <p className="empty">这个范围里还没有笔记。换个时间，或者先去日历记一笔。</p>
+        <p className="empty">
+          {t(
+            '这个范围里还没有笔记。换个时间，或者点右上角「记一笔」。',
+            'No notes in this range. Try another period, or tap “New entry”.',
+          )}
+        </p>
       ) : (
         <div className="notes">
           {notes.map((e) => {
@@ -228,6 +326,7 @@ export function NotesPage() {
                   entry={e}
                   movements={movements}
                   categories={categories}
+                  picked={picked}
                   onOpen={() => setSheet(e)}
                   onView={setViewing}
                 />
@@ -235,6 +334,15 @@ export function NotesPage() {
             )
           })}
         </div>
+      )}
+
+      {exporting && (
+        <ExportCardSheet
+          notes={notes}
+          movements={movements}
+          rangeLabel={rangeLabel}
+          onClose={() => setExporting(false)}
+        />
       )}
 
       {viewing && (
@@ -252,9 +360,30 @@ export function NotesPage() {
           categories={categories}
           movements={movements}
           frequent={frequent}
+          withPhotos
           onClose={() => setSheet(null)}
+          onCategoriesChanged={load}
           onSaved={(m) => {
             setSheet(null)
+            load()
+            show(m)
+          }}
+        />
+      )}
+
+      {adding != null && (
+        <EntrySheet
+          key={`new-${adding}`}
+          date={adding}
+          entries={entriesOnDay(entries, adding)}
+          categories={categories}
+          movements={movements}
+          frequent={frequent}
+          withPhotos
+          onClose={() => setAdding(null)}
+          onCategoriesChanged={load}
+          onSaved={(m) => {
+            setAdding(null)
             load()
             show(m)
           }}

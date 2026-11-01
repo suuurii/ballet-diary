@@ -1,7 +1,46 @@
 import { db } from '../db'
 
-/** 颜色都压低饱和度，避免在米白页面上跳出来 */
+/**
+ * 莫兰迪色系：饱和度都压得很低，像蒙了一层灰。
+ * 前七个是一条从灰粉到墨黑的坡道，默认类型按顺序取，
+ * 所以类型齐的时候，环图本身就是一道粉到黑的渐变；
+ * 后面几个是给自建类型备的灰蓝、灰绿、灰卡其。
+ */
 export const CATEGORY_COLORS = [
+  '#d2aeb4',
+  '#bb8f99',
+  '#a1737f',
+  '#865f6b',
+  '#6a4e58',
+  '#4a3a41',
+  '#2b2327',
+  '#8a8a99',
+  '#78867f',
+  '#8b8172',
+  '#a68b6f',
+  '#6f7f88',
+]
+
+export const DEFAULT_CATEGORIES: { name: string; color: string }[] = [
+  { name: '零基础', color: '#d2aeb4' },
+  { name: '初级', color: '#bb8f99' },
+  { name: '中级', color: '#a1737f' },
+  { name: '技巧', color: '#865f6b' },
+  { name: '软开', color: '#6a4e58' },
+  { name: '舞姿', color: '#4a3a41' },
+  { name: '基础素质', color: '#2b2327' },
+]
+
+/** 旧版本的预置配色，迁移时只替换这些值，不动用户自己改过的颜色 */
+export const LEGACY_COLORS = [
+  '#c2185b',
+  '#e91e63',
+  '#9c27b0',
+  '#3f51b5',
+  '#009688',
+  '#ff7043',
+  '#8d6e63',
+  // 上一版压低饱和度的预置色
   '#c98d98',
   '#b7768a',
   '#8f6d8a',
@@ -14,20 +53,59 @@ export const CATEGORY_COLORS = [
   '#8a7a99',
   '#b08b6a',
   '#6f8a95',
+  // 上一版：从灰粉到墨黑的一条坡道（没有引线之后，相邻两段太像了）
+  '#d2aeb4',
+  '#bb8f99',
+  '#a1737f',
+  '#865f6b',
+  '#6a4e58',
+  '#4a3a41',
+  '#2b2327',
+  '#8a8a99',
+  '#78867f',
+  '#8b8172',
+  '#a68b6f',
+  '#6f7f88',
+  // 上一版：偏暗的莫兰迪七色（现在调亮了一档）
+  '#cf9fa6',
+  '#9d5a67',
+  '#71848c',
+  '#3a3034',
+  '#8d9a80',
+  '#b3946f',
+  '#6d5f74',
+  '#c2b7ae',
+  '#4d6b6e',
+  '#6b7fa0',
+  '#a06a76',
+  '#6f7a5f',
+  // 上一版：调亮一档的莫兰迪（现在换成从插画里取的色）
+  '#eec0c6',
+  '#bd6774',
+  '#93bad0',
+  '#5a5568',
+  '#a9ca9b',
+  '#5b8b86',
+  '#dcb083',
+  '#7c8bb8',
+  '#e3a3a8',
+  '#8d7f9e',
+  '#c3b07a',
+  // 插画配色第一版：藕粉太白，在奶油色卡片上快看不见了，深了一点
+  '#f4dcd7',
+  // 上一版：取自穆夏插画的那套（藕粉 / 杏 / 橄榄绿），现在换回粉到黑
+  '#ebc8c3',
+  '#a85767',
+  '#e2c095',
+  '#3f4a37',
+  '#a8bd88',
+  '#7b5b63',
+  '#d8b48a',
+  '#5c4a44',
+  '#f0dfd2',
+  '#6e7a54',
+  '#c9a3a8',
 ]
-
-export const DEFAULT_CATEGORIES: { name: string; color: string }[] = [
-  { name: '零基础', color: '#c98d98' },
-  { name: '初级', color: '#b7768a' },
-  { name: '中级', color: '#8f6d8a' },
-  { name: '技巧', color: '#6f7b93' },
-  { name: '软开', color: '#7f9a90' },
-  { name: '舞姿', color: '#c08a6f' },
-  { name: '基础素质', color: '#9a8a7a' },
-]
-
-/** 旧版本的预置配色，迁移时只替换这些值，不动用户自己改过的颜色 */
-export const LEGACY_COLORS = ['#c2185b', '#e91e63', '#9c27b0', '#3f51b5', '#009688', '#ff7043', '#8d6e63']
 
 let seedPromise: Promise<void> | null = null
 
@@ -39,6 +117,14 @@ export function ensureSeedCategories(): Promise<void> {
       if (count === 0) {
         const rows = DEFAULT_CATEGORIES.map((c, i) => ({ name: c.name, color: c.color, order: i }))
         await db.categories.bulkAdd(rows)
+        return
+      }
+      // 预置类型换了新配色，把还没被用户改过的那些跟上
+      const cats = await db.categories.toArray()
+      for (const c of cats) {
+        if (!LEGACY_COLORS.includes(c.color)) continue
+        const def = DEFAULT_CATEGORIES.find((d) => d.name === c.name)
+        if (def && def.color !== c.color) await db.categories.update(c.id!, { color: def.color })
       }
     })()
   }

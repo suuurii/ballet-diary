@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ensureSeedCategories } from './lib/categories'
+import { t, useLang } from './lib/i18n'
 import { migrateLegacy } from './lib/migrate'
 import { CalendarPage } from './pages/CalendarPage'
 import { NotesPage } from './pages/NotesPage'
@@ -26,7 +27,7 @@ function Icon({ children }: { children: ReactNode }) {
 const TABS = [
   {
     to: '/',
-    label: '日历',
+    label: ['日历', 'Calendar'] as const,
     end: true,
     icon: (
       <Icon>
@@ -39,7 +40,7 @@ const TABS = [
   },
   {
     to: '/notes',
-    label: '笔记',
+    label: ['笔记', 'Notes'] as const,
     end: false,
     icon: (
       <Icon>
@@ -51,6 +52,7 @@ const TABS = [
 ]
 
 export default function App() {
+  useLang()
   const { pathname } = useLocation()
   const showTabs = pathname !== '/settings'
 
@@ -83,15 +85,15 @@ export default function App() {
 
       {showTabs && (
         <nav className="tabbar">
-          {TABS.map((t) => (
+          {TABS.map((tab) => (
             <NavLink
-              key={t.to}
-              to={t.to}
-              end={t.end}
+              key={tab.to}
+              to={tab.to}
+              end={tab.end}
               className={({ isActive }) => 'tab' + (isActive ? ' tab-on' : '')}
             >
-              <span className="tab-icon">{t.icon}</span>
-              <span>{t.label}</span>
+              <span className="tab-icon">{tab.icon}</span>
+              <span>{t(tab.label[0], tab.label[1])}</span>
             </NavLink>
           ))}
         </nav>
