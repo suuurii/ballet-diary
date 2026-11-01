@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie'
+import { touch } from './lib/touch'
 
 export interface Category {
   id?: number
@@ -13,6 +14,14 @@ export interface Movement {
   createdAt: number
 }
 
+/** 某个动作底下的一条要点，一条就是一行 */
+export interface EntryPoint {
+  movementId: number
+  text: string
+  /** 0 是一级要点，1 是缩进一级的展开或举例；老记录没有这个字段，当 0 看 */
+  level?: number
+}
+
 /** 一条记录 = 一次练习 + 一次心得。时长、动作、文字、照片都可以留空，但至少填一样。 */
 export interface Entry {
   id?: number
@@ -22,9 +31,28 @@ export interface Entry {
   durationMin: number
   categoryId: number | null
   movementIds: number[]
+  /** 每个动作各自的要点；老记录没有这个字段，靠 note 显示 */
+  points?: EntryPoint[]
+  /** 整节课的话，一行一条 */
   note: string
   images: Blob[]
   source: 'manual' | 'watch'
+  createdAt: number
+}
+
+/**
+ * 一笔花费：买课卡、买体服、买足尖鞋……
+ * 和练习记录分开记，因为一笔钱不是一次课。
+ */
+export interface Spend {
+  id?: number
+  /** 花在哪天，当天 00:00 */
+  date: number
+  /** 金额，元 */
+  amount: number
+  /** 分类，自己起的名字：课时费、服装、配件…… */
+  category: string
+  note: string
   createdAt: number
 }
 
@@ -75,6 +103,7 @@ class BalletDB extends Dexie {
   movements!: Table<Movement, number>
   entries!: Table<Entry, number>
   places!: Table<Place, number>
+  spends!: Table<Spend, number>
   settings!: Table<Setting, string>
   practiceRecords!: Table<LegacyPracticeRecord, number>
   notes!: Table<LegacyNote, number>
@@ -100,7 +129,24 @@ class BalletDB extends Dexie {
     this.version(4).stores({
       settings: 'key',
     })
+    this.version(5).stores({
+      spends: '++id, date, category',
+    })
   }
 }
 
 export const db = new BalletDB()
+
+// 记录、花费、类型、动作、地点——任何一处有增删改，就按一下信号灯，云备份会自己跟上。
+// settings 不算在内：云备份自己就要往 settings 里写「上次上传时间」，算进去会自己叫醒自己。
+for (const table of [db.entries, db.spends, db.categories, db.movements, db.places]) {
+  table.hook('creating', () => {
+    touch()
+  })
+  table.hook('updating', () => {
+    touch()
+  })
+  table.hook('deleting', () => {
+    touch()
+  })
+}
