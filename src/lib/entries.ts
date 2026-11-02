@@ -23,10 +23,13 @@ export function entriesOnDay(entries: Entry[], day: number): Entry[] {
 /**
  * 常记的时长，最多 3 个；没有历史时给一组默认值。
  * 超过 4 小时的时长多半是导入时算错了，不放进快捷选项（要记还是能自己填）。
+ * 只算自己手记的那几笔：导入进来的（手表、CSV）时长是事后算出来的，
+ * 不代表她习惯点什么，否则一排会变成 77 分、81.1 分这种。
  */
 export function frequentDurations(entries: Entry[], count = 3): number[] {
   const freq = new Map<number, number>()
   for (const e of entries) {
+    if (e.source !== 'manual') continue
     if (e.durationMin < 10 || e.durationMin > 240) continue
     freq.set(e.durationMin, (freq.get(e.durationMin) || 0) + 1)
   }
