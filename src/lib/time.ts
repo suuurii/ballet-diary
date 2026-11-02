@@ -102,6 +102,16 @@ export function hoursShort(min: number): string {
   return `${hoursValue(min)}h`
 }
 
+/**
+ * 快捷标签上的时长：半小时的整数倍写成 0.5h / 1h / 1.5h，
+ * 其余的（45 分、20 分）还是写分钟，免得出现 0.75h 这种要换算的。
+ */
+export function chipDuration(min: number): string {
+  const m = Math.round(min)
+  if (m > 0 && m % 30 === 0) return hoursShort(m)
+  return getLang() === 'en' ? `${m} min` : `${m} 分`
+}
+
 /** 90 → "1.5 小时"，用于日历上方的汇总 */
 export function formatHours(min: number): string {
   const en = getLang() === 'en'

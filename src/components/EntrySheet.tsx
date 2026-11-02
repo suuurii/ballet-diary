@@ -3,7 +3,7 @@ import { db, type Category, type Entry, type EntryPoint, type Movement } from '.
 import { CATEGORY_COLORS } from '../lib/categories'
 import { displayMove, matchScore, normName } from '../lib/movements'
 import { BALLET_TERMS } from '../lib/balletTerms'
-import { formatDuration, fromDateInput, toYMD, weekdayCN } from '../lib/time'
+import { chipDuration, formatDuration, fromDateInput, toYMD, weekdayCN } from '../lib/time'
 import { clearDurationPresets, loadDurationPresets, saveDurationPresets } from '../lib/durations'
 import { useHoldDrag } from '../lib/holdDrag'
 import { useBlobUrls } from '../hooks/useBlobUrls'
@@ -664,7 +664,7 @@ export function EntrySheet({
                     onClick={() => removePreset(d)}
                     aria-label={t(`删掉 ${d} 分这个快捷时长`, `Remove the ${d} min preset`)}
                   >
-                    {t(`${d} 分`, `${d} min`)}
+                    {chipDuration(d)}
                     <span className="chip-x" aria-hidden="true">
                       ×
                     </span>
@@ -690,7 +690,7 @@ export function EntrySheet({
                     }}
                     onContextMenu={(e) => e.preventDefault()}
                   >
-                    {t(`${d} 分`, `${d} min`)}
+                    {chipDuration(d)}
                   </button>
                 ),
               )}
