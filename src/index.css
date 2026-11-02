@@ -1892,12 +1892,22 @@ img {
   border-color: var(--ink-3);
 }
 
-/* 填分钟数的那一格：比名字窄，数字居中 */
+/* 填时长的那一格：比名字窄，数字居中 */
 .chip-input-num {
-  width: 78px;
+  width: 86px;
   padding: 0 8px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* 填的时候在旁边实时显示换算结果：= 1.5h / = 45 分 */
+.dur-hint {
+  align-self: center;
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---------- 动作要点 ---------- */

@@ -30,6 +30,20 @@ const nextKey = () => `g${++groupSeq}`
 const ORDER_KEY = 'categoryOrderManual'
 
 /**
+ * 新常用时长怎么读：带小数点、或者 6 以内，当小时（1.5 → 90 分）；
+ * 其余的当分钟（45 → 45 分）。输入框旁边会实时显示换算结果，不会读错。
+ */
+function parseDurInput(raw: string): number | null {
+  const s = raw.trim().replace(',', '.')
+  if (!s) return null
+  const n = Number(s)
+  if (!Number.isFinite(n) || n <= 0) return null
+  const min = Math.round(s.includes('.') || n <= 6 ? n * 60 : n)
+  if (min <= 0 || min > 24 * 60) return null
+  return min
+}
+
+/**
  * 类型默认按「用过多少次」排，常用的排在前面。
  * 次数一样时按原来的顺序，没对通用过的类型自然落在后面。
  */
@@ -188,6 +202,8 @@ export function EntrySheet({
   const presetsRef = useRef(presets)
   presetsRef.current = presets
   const durDrag = useHoldDrag(durRowRef, 'data-dur')
+  // 一边填一边告诉她这个数被读成了多少（1.5 → 1.5h，45 → 45 分）
+  const durPreview = parseDurInput(durInput)
   const [groups, setGroups] = useState<PointGroup[]>(() => groupsOf(start, movements))
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [mvQuery, setMvQuery] = useState('')
@@ -361,10 +377,10 @@ export function EntrySheet({
 
   /** 编辑时长时用 ＋ 新建一个，排在最后；建完不自动选中，点一下才用 */
   function addPreset() {
-    const n = Math.round(Number(durInput.trim()))
+    const n = parseDurInput(durInput)
     setDurAdding(false)
     setDurInput('')
-    if (!Number.isFinite(n) || n <= 0 || n > 24 * 60) return
+    if (n == null) return
     if (presetsRef.current.includes(n)) return
     savePresets([...presetsRef.current, n])
   }
@@ -698,13 +714,17 @@ export function EntrySheet({
               )}
               {durEdit ? (
                 durAdding ? (
+                  <>
                   <input
                     className="chip chip-input chip-input-num"
                     value={durInput}
                     autoFocus
-                    inputMode="numeric"
-                    placeholder={t('分钟', 'min')}
-                    aria-label={t('新的常用时长（分钟）', 'New preset (minutes)')}
+                    inputMode="decimal"
+                    placeholder={t('1.5 / 45', '1.5 / 45')}
+                    aria-label={t(
+                      '新的常用时长：1.5 表示 1.5 小时，45 表示 45 分钟',
+                      'New preset: 1.5 means 1.5 hours, 45 means 45 minutes',
+                    )}
                     onChange={(e) => setDurInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -717,6 +737,10 @@ export function EntrySheet({
                     }}
                     onBlur={addPreset}
                   />
+                  {durPreview != null && (
+                    <span className="dur-hint">= {chipDuration(durPreview)}</span>
+                  )}
+                  </>
                 ) : (
                   <button
                     type="button"
