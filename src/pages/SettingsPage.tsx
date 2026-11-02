@@ -23,6 +23,7 @@ import {
   lastBatchSize,
   recordBatch,
   undoLastImport,
+  type ImportKind,
   type ImportSummary,
 } from '../lib/imports'
 import { startOfDay, toYMD } from '../lib/time'
@@ -371,6 +372,8 @@ export function SettingsPage() {
         return
       }
 
+      // 把总时长也报出来，单位读错（小时当成分钟）一眼就能发现
+      const totalHours = Math.round((rows.reduce((s, e) => s + e.durationMin, 0) / 60) * 10) / 10
       const missTypes = [...unmatched].slice(0, 3).join('、') + (unmatched.size > 3 ? '…' : '')
       const missNote =
         unmatched.size > 0
@@ -382,8 +385,8 @@ export function SettingsPage() {
       if (
         !window.confirm(
           t(
-            `找到 ${parsed.rows.length} 条记录，其中 ${rows.length} 条是新的。导入吗？${missNote}`,
-            `Found ${parsed.rows.length} records, ${rows.length} of them new. Import?${missNote}`,
+            `找到 ${parsed.rows.length} 条记录，其中 ${rows.length} 条是新的，一共 ${totalHours} 小时。导入吗？${missNote}`,
+            `Found ${parsed.rows.length} records, ${rows.length} of them new, ${totalHours} hours in total. Import?${missNote}`,
           ),
         )
       )
@@ -430,20 +433,22 @@ export function SettingsPage() {
     show(t(`已撤回 ${n} 条`, `Removed ${n}`))
   }
 
-  async function clearImport() {
-    if (importInfo.total === 0) return
+  async function clearImport(kind: ImportKind) {
+    const n = kind === 'watch' ? importInfo.watch : importInfo.file
+    if (n === 0) return
+    const what = kind === 'watch' ? t('手表导入的', 'from Apple Watch') : t('从文件导入的', 'from files')
     if (
       !window.confirm(
         t(
-          `清空全部导入的记录？\n\n会删掉手表的 ${importInfo.watch} 条和文件导入的 ${importInfo.file} 条，共 ${importInfo.total} 条。自己手动记的记录、笔记、照片都不受影响。删了就找不回来了。`,
-          `Delete every imported record?\n\nThat is ${importInfo.watch} from Apple Watch and ${importInfo.file} from files, ${importInfo.total} in total. Records you made by hand, notes and photos are untouched. This cannot be undone.`,
+          `清空${what} ${n} 条记录？\n\n只删这一部分；另一种导入、自己手动记的记录、笔记、照片都不受影响。删了就找不回来了。`,
+          `Delete the ${n} records ${what}?\n\nThe other import source, records you made by hand, notes and photos are untouched. This cannot be undone.`,
         ),
       )
     )
       return
-    const n = await clearImported()
+    const removed = await clearImported(kind)
     refreshImports()
-    show(t(`已清空 ${n} 条导入记录`, `Deleted ${n} imported records`))
+    show(t(`已清空 ${removed} 条`, `Deleted ${removed}`))
   }
 
   async function resetCategories() {
@@ -656,9 +661,32 @@ export function SettingsPage() {
                   `Undo last import${lastBatch > 0 ? ` (${lastBatch})` : ''}`,
                 )}
               </button>
-              <button className="btn btn-outline" onClick={clearImport} disabled={!!busy}>
-                {t('清空导入记录', 'Delete imported')}
-              </button>
+            </div>
+            <div className="btn-row">
+              {importInfo.watch > 0 && (
+                <button
+                  className="btn btn-outline"
+                  onClick={() => clearImport('watch')}
+                  disabled={!!busy}
+                >
+                  {t(
+                    `清空手表记录（${importInfo.watch} 条）`,
+                    `Delete watch records (${importInfo.watch})`,
+                  )}
+                </button>
+              )}
+              {importInfo.file > 0 && (
+                <button
+                  className="btn btn-outline"
+                  onClick={() => clearImport('file')}
+                  disabled={!!busy}
+                >
+                  {t(
+                    `清空文件导入（${importInfo.file} 条）`,
+                    `Delete file imports (${importInfo.file})`,
+                  )}
+                </button>
+              )}
             </div>
             {importInfo.classified > 0 && (
               <button className="link-btn" onClick={resetCategories}>

@@ -1691,6 +1691,10 @@ img {
   gap: 10px;
 }
 
+.btn-row + .btn-row {
+  margin-top: 10px;
+}
+
 /* ---------- 底部面板 ---------- */
 
 .sheet-mask {

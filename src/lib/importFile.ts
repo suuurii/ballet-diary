@@ -115,7 +115,26 @@ function normKey(s: string): string {
   return normHeader(s)
 }
 
-type HeaderMap = Partial<Record<HeaderKind, number>>
+type HeaderMap = Partial<Record<HeaderKind, number>> & {
+  /** 表头写了单位时用：`时长（h）` 里的 1.5 是 1.5 小时，要乘 60 */
+  durationScale?: number
+}
+
+/**
+ * 表头里的单位：「时长（h）」「Duration (hours)」「时长（小时）」都算小时。
+ * 没写单位就当分钟——绝大多数 App 的默认。
+ */
+function headerHourScale(header: string): number {
+  const s = header.toLowerCase()
+  if (/小时|小時/.test(s)) return 60
+  const parens = [...s.matchAll(/[（(]([^）)]*)[）)]/g)].map((m) => m[1].trim())
+  if (parens.some((p) => /^(h|hr|hrs|hour|hours)$/.test(p))) return 60
+  if (/\b(hours?|hrs?)\b/.test(s)) return 60
+  return 1
+}
+
+/** 格子里自己带了单位（1.5h、90 分钟、01:30）就不用再看表头 */
+const EXPLICIT_UNIT = /小时|小時|hours?|hrs?|h(?![a-z])|分钟|分鐘|分|minutes?|mins?|m(?![a-z])|:/
 
 /** 在一行里找表头；认不全（至少要有日期 + 时长，或者开始 + 结束）就返回 null */
 export function mapHeaderRow(cells: string[]): HeaderMap | null {
@@ -147,6 +166,7 @@ export function mapHeaderRow(cells: string[]): HeaderMap | null {
     }
     if (hit >= 0) {
       map[kind] = hit
+      if (kind === 'duration') map.durationScale = headerHourScale(cells[hit] ?? '')
       used.add(hit)
     }
   }
@@ -186,7 +206,38 @@ export function parseDuration(raw: string): number {
   return 0
 }
 
-/** 日期能写成 2024-05-01、2024/5/1、2024年5月1日、05/01/2024、时间戳…… */
+const MONTH_NAMES: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+}
+
+/**
+ * 「Oct 28」这种没写年份的：按今年算；但要是算出来在明天以后，
+ * 多半是去年的记录（年初导出上个月的记录），往前退一年。
+ */
+function dayFromMonthName(monthName: string, day: number, yearText?: string): number {
+  const m = MONTH_NAMES[monthName.slice(0, 3).toLowerCase()]
+  if (m == null || !(day >= 1 && day <= 31)) return 0
+  const now = new Date()
+  const year = yearText ? +yearText : now.getFullYear()
+  let d = new Date(year, m, day)
+  if (!yearText && d.getTime() > startOfDay(now.getTime()) + 86400000) {
+    d = new Date(year - 1, m, day)
+  }
+  return startOfDay(d.getTime())
+}
+
+/** 日期能写成 2024-05-01、2024/5/1、2024年5月1日、05/01/2024、Oct 28 09:48、时间戳…… */
 export function parseDateCell(raw: string): number {
   const s = raw.trim()
   if (!s) return 0
@@ -221,6 +272,20 @@ export function parseDateCell(raw: string): number {
     return startOfDay(new Date(y, +m[1] - 1, +m[2]).getTime())
   }
 
+  // Oct 28 09:48 / Oct 28, 2026 / October 28th（英文月份，年份可省）
+  m = s.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/)
+  if (m) {
+    const v = dayFromMonthName(m[1], +m[2], m[3])
+    if (v) return v
+  }
+
+  // 28 Oct 2026 / 28 Oct（日在前）
+  m = s.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?(?:,?\s+(\d{4}))?/)
+  if (m) {
+    const v = dayFromMonthName(m[2], +m[1], m[3])
+    if (v) return v
+  }
+
   const t = Date.parse(s.replace(/\//g, '-'))
   if (!Number.isNaN(t)) return startOfDay(t)
   return 0
@@ -231,7 +296,13 @@ function toRow(cells: string[], map: HeaderMap): ImportedRow | null {
   const date = parseDateCell(dateText)
   if (!date) return null
 
-  let durationMin = parseDuration(cellOf(cells, map.duration))
+  const durText = cellOf(cells, map.duration)
+  let durationMin = parseDuration(durText)
+  // 表头说「小时」、格子里又只有数字（1.5）——那就是 1.5 小时，别按 1.5 分钟算
+  if (map.durationScale === 60 && durText && !EXPLICIT_UNIT.test(durText.toLowerCase())) {
+    const n = durText.match(/\d+(?:\.\d+)?/)
+    if (n) durationMin = +n[0] * 60
+  }
   if (durationMin <= 0 && map.start != null && map.end != null) {
     const s = Date.parse(cellOf(cells, map.start).replace(/\//g, '-'))
     const e = Date.parse(cellOf(cells, map.end).replace(/\//g, '-'))
@@ -250,9 +321,9 @@ export function tableToRows(matrix: string[][]): ParsedTable | null {
   for (let h = 0; h < Math.min(matrix.length, 15); h++) {
     const map = mapHeaderRow(matrix[h])
     if (!map) continue
-    const columns = Object.entries(map)
-      .map(([kind, i]) => `${kind}:${matrix[h][i] ?? ''}`)
-      .filter(Boolean)
+    const columns = HEADER_KEYS.map(([kind]) => [kind, map[kind]] as const)
+      .filter(([, i]) => i != null)
+      .map(([kind, i]) => `${kind}:${matrix[h][i!] ?? ''}`)
     const rows: ImportedRow[] = []
     let skipped = 0
     for (let i = h + 1; i < matrix.length; i++) {

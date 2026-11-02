@@ -162,11 +162,15 @@ export async function undoLastImport(): Promise<number> {
   return existing
 }
 
-/** 清空所有导入的记录（手动记的不受影响） */
-export async function clearImported(): Promise<number> {
-  const n = await db.entries.where('source').anyOf('watch', 'file').count()
-  await db.entries.where('source').anyOf('watch', 'file').delete()
-  await db.settings.delete(BATCH_KEY)
+/** 清空导入的记录：给了 kind 就只清那一种；手动记的永远不碰 */
+export async function clearImported(kind?: ImportKind): Promise<number> {
+  const kinds: ImportKind[] = kind ? [kind] : ['watch', 'file']
+  const n = await db.entries.where('source').anyOf(kinds).count()
+  await db.entries.where('source').anyOf(kinds).delete()
+  // 撤回用的批次也跟着走，只留另一种来源的
+  const left = kind ? (await loadBatches()).filter((b) => b.kind !== kind) : []
+  if (left.length > 0) await saveBatches(left)
+  else await db.settings.delete(BATCH_KEY)
   return n
 }
 
