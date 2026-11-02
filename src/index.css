@@ -21,6 +21,8 @@
     'Helvetica Neue', sans-serif;
 
   --gutter: 22px;
+  /* 左右留白：竖屏就是 22px；横屏时如果贴到刘海/圆角，自动让开 */
+  --pad-x: max(var(--gutter), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
   --radius: 16px;
 }
 
@@ -89,7 +91,7 @@ img {
 }
 
 .main {
-  padding: 14px var(--gutter) calc(84px + env(safe-area-inset-bottom));
+  padding: 14px var(--pad-x) calc(84px + env(safe-area-inset-bottom));
 }
 
 .main-plain {
@@ -131,9 +133,11 @@ img {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  height: 44px;
-  margin: -14px calc(var(--gutter) * -1) 14px;
-  padding: 0 var(--gutter);
+  /* 装到主屏幕后页面会顶到屏幕最上沿，这里把状态栏那条高度让出来：
+     奶玻璃照样铺到最顶，里面的字和按钮落在状态栏下面 */
+  height: calc(44px + env(safe-area-inset-top, 0px));
+  margin: -14px calc(var(--pad-x) * -1) 14px;
+  padding: env(safe-area-inset-top, 0px) var(--pad-x) 0;
   background: rgba(247, 242, 241, 0.72);
   border-bottom: 1px solid var(--line-soft);
   backdrop-filter: blur(18px) saturate(170%);
@@ -1707,7 +1711,7 @@ img {
     0 -20px 50px -28px rgba(80, 42, 52, 0.42);
   backdrop-filter: blur(34px) saturate(170%);
   -webkit-backdrop-filter: blur(34px) saturate(170%);
-  padding: 0 var(--gutter) calc(20px + env(safe-area-inset-bottom));
+  padding: 0 var(--pad-x) calc(20px + env(safe-area-inset-bottom));
   animation: slide 0.24s cubic-bezier(0.22, 0.8, 0.3, 1) both;
 }
 
@@ -2215,7 +2219,8 @@ img {
   display: flex;
   max-width: 520px;
   margin: 0 auto;
-  padding: 8px 0 calc(6px + env(safe-area-inset-bottom));
+  padding: 8px env(safe-area-inset-right, 0px) calc(6px + env(safe-area-inset-bottom))
+    env(safe-area-inset-left, 0px);
   background: rgba(247, 242, 241, 0.9);
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
