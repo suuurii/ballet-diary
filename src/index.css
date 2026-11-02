@@ -749,43 +749,39 @@ img {
   font-variant-numeric: tabular-nums;
 }
 
-/* 12 个月各一小块，一天一格 */
-.yhm-months {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px 8px;
+/* 一整年的热力图：一天一格，一列一周 */
+.yhm-body {
   margin-top: 10px;
 }
 
-.yhm-month {
-  min-width: 0;
+.yhm-months {
+  position: relative;
+  height: 13px;
 }
 
-.yhm-month-label {
-  display: block;
-  margin-bottom: 3px;
-  font-size: 9px;
-  letter-spacing: 0.04em;
+.yhm-months span {
+  position: absolute;
+  top: 0;
+  font-size: 8.5px;
   color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
-.yhm-month-grid {
+.yhm-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
-}
-
-.yhm-cell,
-.yhm-blank {
-  aspect-ratio: 1;
-  border-radius: 2px;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, auto);
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2.5px 1.5px;
 }
 
 .yhm-cell {
+  aspect-ratio: 1;
+  border-radius: 2px;
   background: var(--heat-0);
 }
 
-.yhm-blank {
+.yhm-cell[data-level='-1'] {
   background: transparent;
 }
 
