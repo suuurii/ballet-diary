@@ -708,10 +708,23 @@ img {
   overflow: hidden;
 }
 
+/* 两页各自按自己的高度排，卡的总高度由当前这一页决定（高度在组件里量出来） */
+.split-swipe .goal-track {
+  align-items: flex-start;
+  overflow-y: hidden;
+  transition: height 0.24s ease;
+}
+
 .split-swipe .goal-slide {
   padding: 14px 16px 4px;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .split-swipe .goal-track {
+    transition: none;
+  }
 }
 
 .yhm-nav {
