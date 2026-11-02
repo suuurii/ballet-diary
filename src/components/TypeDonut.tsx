@@ -200,7 +200,7 @@ export function TypeDonut({ entries, categories }: { entries: Entry[]; categorie
   const capSize = Math.round(Math.min(9.5, Math.max(7.5, R * 0.14)) * 10) / 10
 
   return (
-    <section className="split" aria-label={t('各类课程的时长分布', 'Practice time by class type')}>
+    <div className="split-page" aria-label={t('各类课程的时长分布', 'Practice time by class type')}>
       <div className="split-head">
         <span className="split-title">{t('类型分布', 'By class type')}</span>
         <div className="chips split-chips">
@@ -312,6 +312,6 @@ export function TypeDonut({ entries, categories }: { entries: Entry[]; categorie
           </div>
         </div>
       )}
-    </section>
+    </div>
   )
 }

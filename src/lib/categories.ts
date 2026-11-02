@@ -2,33 +2,33 @@ import { db } from '../db'
 
 /**
  * 莫兰迪色系：饱和度都压得很低，像蒙了一层灰。
- * 前七个是一条从灰粉到墨黑的坡道，默认类型按顺序取，
- * 所以类型齐的时候，环图本身就是一道粉到黑的渐变；
- * 后面几个是给自建类型备的灰蓝、灰绿、灰卡其。
+ * 一整条都在粉色系里走——从浅藕粉到深酒红，不再落到墨黑，
+ * 所以类型多的时候环图也是一片粉，不会突然蹦出一截黑的。
+ * 后面几个是给自建类型备的灰粉、灰紫。
  */
 export const CATEGORY_COLORS = [
-  '#d2aeb4',
-  '#bb8f99',
-  '#a1737f',
-  '#865f6b',
-  '#6a4e58',
-  '#4a3a41',
-  '#2b2327',
-  '#8a8a99',
-  '#78867f',
-  '#8b8172',
-  '#a68b6f',
-  '#6f7f88',
+  '#d8b3ba',
+  '#c79aa2',
+  '#b68290',
+  '#a56a7a',
+  '#925465',
+  '#7d4353',
+  '#693647',
+  '#b394a0',
+  '#a08892',
+  '#c4a49b',
+  '#8a6f7c',
+  '#bb8f96',
 ]
 
 export const DEFAULT_CATEGORIES: { name: string; color: string }[] = [
-  { name: '零基础', color: '#d2aeb4' },
-  { name: '初级', color: '#bb8f99' },
-  { name: '中级', color: '#a1737f' },
-  { name: '技巧', color: '#865f6b' },
-  { name: '软开', color: '#6a4e58' },
-  { name: '舞姿', color: '#4a3a41' },
-  { name: '基础素质', color: '#2b2327' },
+  { name: '零基础', color: '#d8b3ba' },
+  { name: '初级', color: '#c79aa2' },
+  { name: '中级', color: '#b68290' },
+  { name: '技巧', color: '#a56a7a' },
+  { name: '软开', color: '#925465' },
+  { name: '舞姿', color: '#7d4353' },
+  { name: '基础素质', color: '#693647' },
 ]
 
 /** 旧版本的预置配色，迁移时只替换这些值，不动用户自己改过的颜色 */
@@ -119,12 +119,17 @@ export function ensureSeedCategories(): Promise<void> {
         await db.categories.bulkAdd(rows)
         return
       }
-      // 预置类型换了新配色，把还没被用户改过的那些跟上
-      const cats = await db.categories.toArray()
-      for (const c of cats) {
+      // 换了新配色：旧配色都还在 LEGACY_COLORS 里，碰到就换掉。
+      // 预置类型照名字对到新色；自己建的类型按它排第几个，取新坡道里的色，
+      // 否则它们会一直停在以前那套（以前最深的一档是墨黑）。
+      const cats = (await db.categories.toArray()).sort(
+        (a, b) => a.order - b.order || a.id! - b.id!,
+      )
+      for (const [i, c] of cats.entries()) {
         if (!LEGACY_COLORS.includes(c.color)) continue
         const def = DEFAULT_CATEGORIES.find((d) => d.name === c.name)
-        if (def && def.color !== c.color) await db.categories.update(c.id!, { color: def.color })
+        const next = def ? def.color : CATEGORY_COLORS[i % CATEGORY_COLORS.length]
+        if (next !== c.color) await db.categories.update(c.id!, { color: next })
       }
     })()
   }

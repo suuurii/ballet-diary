@@ -19,7 +19,7 @@ import { YearProgress } from '../components/YearProgress'
 import { GoalSheet } from '../components/GoalSheet'
 import { MonthPickerSheet } from '../components/MonthPickerSheet'
 import { SpendSheet } from '../components/SpendSheet'
-import { TypeDonut } from '../components/TypeDonut'
+import { TypeAndYear } from '../components/TypeAndYear'
 import { LangToggle } from '../components/LangToggle'
 import { Toast } from '../components/Toast'
 import { useToast } from '../hooks/useToast'
@@ -223,7 +223,7 @@ export function CalendarPage() {
         </div>
       </section>
 
-      <TypeDonut entries={entries} categories={categories} />
+      <TypeAndYear entries={entries} categories={categories} />
 
       {entries.length === 0 && (
         <p className="empty empty-home">
