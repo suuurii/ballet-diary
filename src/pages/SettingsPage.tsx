@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { db } from '../db'
+import { db, type Entry } from '../db'
 import { buildBackupJson, restoreBackupJson } from '../lib/backup'
 import {
   adopt,
@@ -15,8 +15,19 @@ import {
   uploadNow,
 } from '../lib/cloudBackup'
 import { parseHealthFile } from '../lib/healthImport'
+import { parseImportFile } from '../lib/importFile'
+import {
+  clearImported,
+  clearImportedCategories,
+  importSummary,
+  lastBatchSize,
+  recordBatch,
+  undoLastImport,
+  type ImportSummary,
+} from '../lib/imports'
 import { startOfDay, toYMD } from '../lib/time'
 import { Toast } from '../components/Toast'
+import { WatchSplitSheet } from '../components/WatchSplitSheet'
 import { LangToggle } from '../components/LangToggle'
 import { useToast } from '../hooks/useToast'
 import { t, useLang } from '../lib/i18n'
@@ -29,8 +40,18 @@ export function SettingsPage() {
   const [showCode, setShowCode] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreCode, setRestoreCode] = useState('')
+  const [importInfo, setImportInfo] = useState<ImportSummary>({
+    watch: 0,
+    file: 0,
+    total: 0,
+    uncategorized: 0,
+    classified: 0,
+  })
+  const [lastBatch, setLastBatch] = useState(0)
+  const [splitOpen, setSplitOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const healthRef = useRef<HTMLInputElement>(null)
+  const otherRef = useRef<HTMLInputElement>(null)
   const { msg, show } = useToast()
   useLang()
 
@@ -40,7 +61,14 @@ export function SettingsPage() {
     })
     getCode().then(setCloudCode)
     lastUploadAt().then(setCloudUpload)
+    refreshImports()
   }, [])
+
+  /** 导入了多少、还剩多少没分类、上一批有几条 */
+  function refreshImports() {
+    importSummary().then(setImportInfo)
+    lastBatchSize().then(setLastBatch)
+  }
 
   // 备份拖过一个月，就在这一栏和日历的齿轮上轻轻提醒一下
   const backupDays = lastBackup ? Math.floor((Date.now() - lastBackup) / 86400000) : null
@@ -246,7 +274,9 @@ export function SettingsPage() {
         )
       )
         return
-      await db.entries.bulkAdd(rows)
+      const ids = await db.entries.bulkAdd(rows, { allKeys: true })
+      await recordBatch('watch', ids)
+      refreshImports()
       show(t(`已导入 ${rows.length} 条`, `Imported ${rows.length}`))
     } catch (err) {
       console.error(err)
@@ -254,6 +284,182 @@ export function SettingsPage() {
     } finally {
       setBusy('')
     }
+  }
+
+  /** 「日期|时长|类型|备注」——同一份文件再导一次时用来认重 */
+  function importKey(date: number, durationMin: number, typeName: string, note: string): string {
+    return `${date}|${durationMin}|${typeName.trim().toLowerCase()}|${note.trim()}`
+  }
+
+  /** 从别的 App 导出的 CSV / HTML */
+  async function importOtherFile(file: File) {
+    setBusy(t('正在读取文件…', 'Reading file…'))
+    try {
+      const parsed = parseImportFile(await file.text(), file.name)
+      if (parsed.rows.length === 0) {
+        show(
+          t(
+            '文件里没读出记录，「日期」和「时长」那两列是不是空的？',
+            'No rows found — are the date and duration columns empty?',
+          ),
+        )
+        return
+      }
+
+      setBusy(t('正在整理…', 'Sorting…'))
+      const [cats, existing] = await Promise.all([db.categories.toArray(), db.entries.toArray()])
+      const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '')
+      const catByName = new Map(cats.map((c) => [norm(c.name), c.id!]))
+      const catNameById = new Map(cats.map((c) => [c.id!, c.name.trim().toLowerCase()]))
+
+      // 「芭蕾初级」能对上「初级」这种写全的名字；对不上就留成没分类
+      function matchCategory(typeName: string): number | null {
+        const t = norm(typeName)
+        if (!t) return null
+        const exact = catByName.get(t)
+        if (exact != null) return exact
+        let best: { id: number; len: number } | null = null
+        for (const c of cats) {
+          const n = norm(c.name)
+          if (!n) continue
+          if ((t.includes(n) || n.includes(t)) && (!best || n.length > best.len)) {
+            best = { id: c.id!, len: n.length }
+          }
+        }
+        return best ? best.id : null
+      }
+
+      // 已经有的记录先数一遍：同一份文件导第二次时不会重复
+      const pool = new Map<string, number>()
+      for (const e of existing) {
+        // 导入时文件里的类型名优先，其次是现在挂着的类型名
+        const k = importKey(
+          e.date,
+          e.durationMin,
+          e.importType ?? catNameById.get(e.categoryId ?? -1) ?? '',
+          e.note,
+        )
+        pool.set(k, (pool.get(k) ?? 0) + 1)
+      }
+
+      const unmatched = new Set<string>()
+      const rows: Entry[] = []
+      for (const r of parsed.rows) {
+        const k = importKey(r.date, r.durationMin, r.typeName, r.note)
+        const left = pool.get(k) ?? 0
+        if (left > 0) {
+          pool.set(k, left - 1)
+          continue
+        }
+        const categoryId = matchCategory(r.typeName)
+        if (r.typeName && categoryId == null) unmatched.add(r.typeName)
+        rows.push({
+          date: r.date,
+          durationMin: r.durationMin,
+          categoryId,
+          movementIds: [],
+          note: r.note,
+          images: [],
+          source: 'file',
+          importType: r.typeName || undefined,
+          createdAt: Date.now(),
+        })
+      }
+
+      if (rows.length === 0) {
+        show(t('这些记录之前已经导入过了', 'These were already imported'))
+        return
+      }
+
+      const missTypes = [...unmatched].slice(0, 3).join('、') + (unmatched.size > 3 ? '…' : '')
+      const missNote =
+        unmatched.size > 0
+          ? t(
+              `\n\n「${missTypes}」没对上你的课程类型，先留成没分类，之后可以按比例分。`,
+              `\n\n“${missTypes}” didn’t match your class types — they’ll stay unfiled, and you can sort them by ratio afterwards.`,
+            )
+          : ''
+      if (
+        !window.confirm(
+          t(
+            `找到 ${parsed.rows.length} 条记录，其中 ${rows.length} 条是新的。导入吗？${missNote}`,
+            `Found ${parsed.rows.length} records, ${rows.length} of them new. Import?${missNote}`,
+          ),
+        )
+      )
+        return
+
+      setBusy(t('正在导入…', 'Importing…'))
+      const ids = await db.entries.bulkAdd(rows, { allKeys: true })
+      await recordBatch('file', ids)
+      refreshImports()
+      show(t(`已导入 ${rows.length} 条`, `Imported ${rows.length}`))
+    } catch (err) {
+      const kind = (err as Error)?.message
+      show(
+        kind === 'no-table'
+          ? t(
+              '这个 HTML 里没找到表格，换成 CSV 导出再试',
+              'No table in that HTML — try exporting CSV instead',
+            )
+          : kind === 'no-header'
+            ? t(
+                '没找到「日期」「时长」这两列，把文件开头几行发我看看',
+                'Could not find date and duration columns — send me the first few lines',
+              )
+            : t('读取失败，确认一下文件是 CSV 或 HTML', 'Could not read it — is it CSV or HTML?'),
+      )
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function undoImport() {
+    if (lastBatch === 0) return
+    if (
+      !window.confirm(
+        t(
+          `撤回上次导入的 ${lastBatch} 条记录？\n\n这些记录会从手账里删掉，之后给它们分过的类型也一起没了。自己手动记的不受影响。`,
+          `Undo the last import of ${lastBatch} records?\n\nThey will be deleted, including any categories you gave them. Records you made by hand are untouched.`,
+        ),
+      )
+    )
+      return
+    const n = await undoLastImport()
+    refreshImports()
+    show(t(`已撤回 ${n} 条`, `Removed ${n}`))
+  }
+
+  async function clearImport() {
+    if (importInfo.total === 0) return
+    if (
+      !window.confirm(
+        t(
+          `清空全部导入的记录？\n\n会删掉手表的 ${importInfo.watch} 条和文件导入的 ${importInfo.file} 条，共 ${importInfo.total} 条。自己手动记的记录、笔记、照片都不受影响。删了就找不回来了。`,
+          `Delete every imported record?\n\nThat is ${importInfo.watch} from Apple Watch and ${importInfo.file} from files, ${importInfo.total} in total. Records you made by hand, notes and photos are untouched. This cannot be undone.`,
+        ),
+      )
+    )
+      return
+    const n = await clearImported()
+    refreshImports()
+    show(t(`已清空 ${n} 条导入记录`, `Deleted ${n} imported records`))
+  }
+
+  async function resetCategories() {
+    if (importInfo.classified === 0) return
+    if (
+      !window.confirm(
+        t(
+          `把导入记录身上已经分好的 ${importInfo.classified} 条类型清掉，重新按比例分？\n\n记录本身不会删。`,
+          `Clear the categories on ${importInfo.classified} imported records so you can sort them again?\n\nThe records themselves stay.`,
+        ),
+      )
+    )
+      return
+    const n = await clearImportedCategories()
+    refreshImports()
+    show(t(`已清空 ${n} 条的类型`, `Cleared categories on ${n}`))
   }
 
   /** 距离上次上传多久了，说人话 */
@@ -388,6 +594,82 @@ export function SettingsPage() {
       </section>
 
       <section className="block">
+        <h2 className="section-label">{t('其他 App 的记录', 'From another app')}</h2>
+        <p className="hint">
+          {t(
+            '从别的 App 导出 CSV 或 HTML，选进来就能读：它会自己找「日期」「时长」「类型」「备注」这几列，别的列不管。日期或时长读不出来的行会跳过。',
+            'Export CSV or HTML from another app and pick it here. It looks for date, duration, type and note columns; rows without a readable date and duration are skipped.',
+          )}
+        </p>
+        <button className="btn btn-outline" onClick={() => otherRef.current?.click()}>
+          {t('导入 CSV / HTML', 'Import CSV / HTML')}
+        </button>
+        <input
+          ref={otherRef}
+          type="file"
+          accept=".csv,.html,.htm,text/csv,text/html"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) importOtherFile(f)
+          }}
+        />
+      </section>
+
+      <section className="block">
+        <h2 className="section-label">{t('导入的记录', 'Imported records')}</h2>
+        {importInfo.total === 0 ? (
+          <p className="hint">{t('还没有导入过记录。', 'Nothing imported yet.')}</p>
+        ) : (
+          <>
+            <p className="hint">
+              {t(
+                `手表 ${importInfo.watch} 条 · 文件 ${importInfo.file} 条` +
+                  (importInfo.uncategorized > 0
+                    ? ` · ${importInfo.uncategorized} 条还没分类`
+                    : ''),
+                `${importInfo.watch} from Apple Watch · ${importInfo.file} from files` +
+                  (importInfo.uncategorized > 0
+                    ? ` · ${importInfo.uncategorized} unfiled`
+                    : ''),
+              )}
+            </p>
+            {importInfo.uncategorized > 0 && (
+              <div className="split-cta">
+                <button className="btn btn-primary" onClick={() => setSplitOpen(true)}>
+                  {t(
+                    `给 ${importInfo.uncategorized} 条记录分类`,
+                    `Sort ${importInfo.uncategorized} unfiled workouts`,
+                  )}
+                </button>
+              </div>
+            )}
+            <div className="btn-row">
+              <button
+                className="btn btn-outline"
+                onClick={undoImport}
+                disabled={lastBatch === 0 || !!busy}
+              >
+                {t(
+                  `撤回上次导入${lastBatch > 0 ? `（${lastBatch} 条）` : ''}`,
+                  `Undo last import${lastBatch > 0 ? ` (${lastBatch})` : ''}`,
+                )}
+              </button>
+              <button className="btn btn-outline" onClick={clearImport} disabled={!!busy}>
+                {t('清空导入记录', 'Delete imported')}
+              </button>
+            </div>
+            {importInfo.classified > 0 && (
+              <button className="link-btn" onClick={resetCategories}>
+                {t('清空类型，重新按比例分 ›', 'Clear categories and sort again ›')}
+              </button>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="block">
         <h2 className="section-label">{t('备份', 'Backup')}</h2>
         <p className="hint">
           {t(
@@ -431,6 +713,11 @@ export function SettingsPage() {
       </section>
 
       {busy && <p className="hint center">{busy}</p>}
+
+      {splitOpen && (
+        <WatchSplitSheet onClose={() => setSplitOpen(false)} onDone={refreshImports} />
+      )}
+
       <Toast msg={msg} />
     </div>
   )

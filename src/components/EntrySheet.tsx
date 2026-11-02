@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { db, type Category, type Entry, type EntryPoint, type Movement } from '../db'
 import { CATEGORY_COLORS } from '../lib/categories'
 import { displayMove, matchScore, normName } from '../lib/movements'
@@ -24,6 +30,18 @@ interface PointGroup {
 
 let groupSeq = 0
 const nextKey = () => `g${++groupSeq}`
+
+const ORDER_KEY = 'categoryOrderManual'
+
+/**
+ * 类型默认按「用过多少次」排，常用的排在前面。
+ * 次数一样时按原来的顺序，没对通用过的类型自然落在后面。
+ */
+function sortByUse(list: Category[], use: Record<number, number>): Category[] {
+  return [...list].sort(
+    (a, b) => (use[b.id!] ?? 0) - (use[a.id!] ?? 0) || a.order - b.order || a.id! - b.id!,
+  )
+}
 
 function groupsOf(entry: Entry | null, movements: Movement[]): PointGroup[] {
   if (!entry) return []
@@ -157,6 +175,21 @@ export function EntrySheet({
   const [catAdding, setCatAdding] = useState(false)
   const [catInput, setCatInput] = useState('')
   const catRowRef = useRef<HTMLDivElement>(null)
+  // 每类用过多少次、有没有手动调过顺序
+  const [catUse, setCatUse] = useState<Record<number, number>>({})
+  const [orderManual, setOrderManual] = useState(false)
+  const [dragId, setDragId] = useState<number | null>(null)
+  const catsRef = useRef(cats)
+  catsRef.current = cats
+  // 长按拖动用的临时状态：还没到时间就松手 = 普通点按；手指先动了 = 在滚动
+  const holdRef = useRef<{
+    id: number
+    startX: number
+    startY: number
+    active: boolean
+  } | null>(null)
+  // 刚拖完的那一下松手会顺带触发 click，别让它顺手选中类型
+  const suppressClick = useRef(0)
   const [groups, setGroups] = useState<PointGroup[]>(() => groupsOf(start, movements))
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [mvQuery, setMvQuery] = useState('')
@@ -175,6 +208,32 @@ export function EntrySheet({
     }
     catCount.current = cats.length
   }, [cats.length])
+
+  // 类型默认按用过的次数排；她手动调过顺序之后就照她调的来
+  useEffect(() => {
+    let alive = true
+    const counts: Record<number, number> = {}
+    Promise.all([
+      db.settings.get(ORDER_KEY),
+      db.entries
+        .orderBy('categoryId')
+        .each((e) => {
+          if (e.categoryId != null) counts[e.categoryId] = (counts[e.categoryId] ?? 0) + 1
+        })
+        .then(() => counts),
+    ])
+      .then(([row, use]) => {
+        if (!alive) return
+        setCatUse(use)
+        const manual = row?.value === true
+        setOrderManual(manual)
+        if (!manual) setCats((prev) => sortByUse(prev, use))
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // 退出编辑时，把选中的那类滚回视野中间
   useEffect(() => {
@@ -233,6 +292,120 @@ export function EntrySheet({
     await db.categories.delete(c.id!)
     setCats((prev) => prev.filter((x) => x.id !== c.id))
     if (categoryId === c.id) setCategoryId(null)
+    onCategoriesChanged?.()
+  }
+
+  /* ---------- 长按调顺序 ---------- */
+
+  /**
+   * 按住一个类型不放（0.4 秒）就能左右拖。
+   * 手指先动起来的当成在滚这一行，不算长按；拖完那一下也不会顺手选中类型。
+   */
+  function startHold(e: ReactPointerEvent<HTMLButtonElement>, c: Category) {
+    if (catEdit || c.id == null) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+
+    const st = { id: c.id, startX: e.clientX, startY: e.clientY, active: false }
+    holdRef.current = st
+    let timer = 0
+
+    function stop() {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('touchmove', blockScroll)
+      if (holdRef.current === st) holdRef.current = null
+    }
+
+    // 进入拖动后拦住这一行的滚动，别让页面跟着手指跑
+    function blockScroll(ev: TouchEvent) {
+      if (st.active) ev.preventDefault()
+    }
+
+    function onMove(ev: PointerEvent) {
+      if (holdRef.current !== st) return
+      if (!st.active) {
+        // 还没到时间就滑开了：她是在滚这一行
+        if (Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) > 10) stop()
+        return
+      }
+      reorderTo(ev.clientX)
+    }
+
+    function onUp() {
+      if (holdRef.current !== st) return
+      const wasActive = st.active
+      stop()
+      if (wasActive) {
+        suppressClick.current = Date.now() + 400
+        setDragId(null)
+        commitOrder()
+      }
+    }
+
+    timer = window.setTimeout(() => {
+      if (holdRef.current !== st) return
+      st.active = true
+      setDragId(c.id!)
+    }, 420)
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('touchmove', blockScroll, { passive: false })
+  }
+
+  /** 看手指到了哪两个类型中间，把正在拖的那个挪过去 */
+  function reorderTo(x: number) {
+    const hold = holdRef.current
+    const row = catRowRef.current
+    if (!hold?.active || !row) return
+
+    // 拖到边上时让这一行自己滚一点，够得着后面的类型
+    const rr = row.getBoundingClientRect()
+    if (x < rr.left + 36) row.scrollLeft -= 10
+    else if (x > rr.right - 36) row.scrollLeft += 10
+
+    let to = 0
+    for (const el of Array.from(row.querySelectorAll<HTMLElement>('[data-cat-id]'))) {
+      if (Number(el.dataset.catId) === hold.id) continue
+      const r = el.getBoundingClientRect()
+      if (x > r.left + r.width / 2) to++
+    }
+
+    setCats((prev) => {
+      const from = prev.findIndex((c) => c.id === hold.id)
+      if (from < 0 || from === to) return prev
+      const next = [...prev]
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
+      return next
+    })
+  }
+
+  async function commitOrder() {
+    const rows = catsRef.current.map((c, i) => ({ ...c, order: i }))
+    setCats(rows)
+    try {
+      await db.categories.bulkPut(rows)
+      await db.settings.put({ key: ORDER_KEY, value: true })
+      setOrderManual(true)
+      onCategoriesChanged?.()
+    } catch {
+      // 顺序这次没存上就算了，下次打开还会按常用排
+    }
+  }
+
+  /** 改回「按常用排」，手动顺序就作废了 */
+  async function sortByFrequency() {
+    try {
+      await db.settings.delete(ORDER_KEY)
+    } catch {
+      // 删不掉也不影响这次排序
+    }
+    setOrderManual(false)
+    setCats((prev) => sortByUse(prev, catUse))
     onCategoriesChanged?.()
   }
 
@@ -501,17 +674,27 @@ export function EntrySheet({
           <div className="field">
             <div className="label-row">
               <span className="label">{t('类型', 'Class type')}</span>
-              <button
-                type="button"
-                className="label-action"
-                onClick={() => {
-                  setCatEdit((v) => !v)
-                  setCatAdding(false)
-                  setCatInput('')
-                }}
-              >
-                {catEdit ? t('完成', 'Done') : t('编辑', 'Edit')}
-              </button>
+              <span className="label-actions">
+                {!catEdit && (
+                  <span className="label-hint">{t('长按调顺序', 'Hold to reorder')}</span>
+                )}
+                {catEdit && (
+                  <button type="button" className="label-action" onClick={sortByFrequency}>
+                    {t('按常用排序', 'By use')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="label-action"
+                  onClick={() => {
+                    setCatEdit((v) => !v)
+                    setCatAdding(false)
+                    setCatInput('')
+                  }}
+                >
+                  {catEdit ? t('完成', 'Done') : t('编辑', 'Edit')}
+                </button>
+              </span>
             </div>
             <div className="chips chips-scroll" ref={catRowRef}>
               {cats.map((c) =>
@@ -533,8 +716,19 @@ export function EntrySheet({
                   <button
                     key={c.id}
                     type="button"
-                    className={'chip chip-dot' + (categoryId === c.id ? ' chip-on' : '')}
-                    onClick={() => setCategoryId(categoryId === c.id ? null : c.id!)}
+                    data-cat-id={c.id}
+                    className={
+                      'chip chip-dot' +
+                      (categoryId === c.id ? ' chip-on' : '') +
+                      (dragId === c.id ? ' chip-dragging' : '')
+                    }
+                    style={dragId === c.id ? { touchAction: 'none' } : undefined}
+                    onPointerDown={(e) => startHold(e, c)}
+                    onClick={() => {
+                      if (Date.now() < suppressClick.current) return
+                      setCategoryId(categoryId === c.id ? null : c.id!)
+                    }}
+                    onContextMenu={(e) => e.preventDefault()}
                   >
                     <i style={{ background: c.color }} />
                     {c.name}

@@ -1244,8 +1244,24 @@ img {
   transition: all 0.15s ease;
 }
 
+.chip {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
 .chip:active {
   transform: scale(0.96);
+}
+
+/* 长按拖起来的那一颗：轻轻抬起来，看得见在动 */
+.chip.chip-dragging {
+  position: relative;
+  z-index: 2;
+  transform: scale(1.06);
+  box-shadow: 0 6px 18px rgba(31, 25, 27, 0.16);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .chip-on {
@@ -1829,6 +1845,14 @@ img {
   color: var(--ink-3);
 }
 
+/* 右边一组小动作：「按常用排序」和「编辑 / 完成」 */
+.label-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-left: auto;
+}
+
 .chip-plus {
   width: 34px;
   padding: 0;
@@ -2075,6 +2099,152 @@ img {
   line-height: 1.55;
   letter-spacing: 0.01em;
   color: var(--ink-3);
+}
+
+/* 按比例分类：一行一个课程类型，右边是份数 */
+.split-cta {
+  margin-top: 10px;
+}
+
+.split-list {
+  margin: 2px 0 6px;
+}
+
+.split-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.split-row:last-child {
+  border-bottom: none;
+}
+
+.split-modes {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.split-mode {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--card);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  transition:
+    background 0.14s ease,
+    color 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.split-mode.on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.split-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.split-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.split-hours {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.split-input {
+  width: 64px;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.split-input:focus {
+  outline: none;
+  border-color: var(--rose);
+}
+
+.split-input::placeholder {
+  color: var(--ink-3);
+}
+
+.split-unit {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.split-sum {
+  margin: 10px 0 4px;
+}
+
+.split-pct {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.split-step {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.split-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--ink-2);
+  transition: background 0.12s ease;
+}
+
+.split-btn:disabled {
+  color: var(--line);
+}
+
+.split-btn:active:not(:disabled) {
+  background: var(--rose-soft);
+}
+
+.split-num {
+  min-width: 16px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .num-lg {

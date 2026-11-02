@@ -49,7 +49,8 @@ export async function buildBackupJson(): Promise<string> {
         photos: await Promise.all(p.photos.map((b) => blobToDataURL(b))),
       })),
     ),
-    settings,
+    // 导入批次里的 id 只对这台手机有意义，带进备份反而会误导
+    settings: settings.filter((s) => s.key !== 'importBatches'),
     spends,
   }
   return JSON.stringify(data)
@@ -112,7 +113,8 @@ export async function restoreBackupJson(text: string): Promise<number> {
         ),
       note: e.note || '',
       images: await Promise.all((e.images || []).map((u: string) => dataURLToBlob(u))),
-      source: e.source === 'watch' ? 'watch' : 'manual',
+      source: e.source === 'watch' || e.source === 'file' ? e.source : 'manual',
+      importType: typeof e.importType === 'string' && e.importType ? e.importType : undefined,
       createdAt: e.createdAt || Date.now(),
     })
     added++
@@ -150,6 +152,7 @@ export async function restoreBackupJson(text: string): Promise<number> {
   }
 
   for (const s of data.settings || []) {
+    if (s?.key === 'importBatches') continue
     if (s?.key) await db.settings.put({ key: s.key, value: s.value ?? null })
   }
 

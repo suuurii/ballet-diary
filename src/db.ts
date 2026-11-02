@@ -36,7 +36,10 @@ export interface Entry {
   /** 整节课的话，一行一条 */
   note: string
   images: Blob[]
-  source: 'manual' | 'watch'
+  /** manual = 自己记的；watch = 手表导的；file = 从别的 App 导的文件 */
+  source: 'manual' | 'watch' | 'file'
+  /** 从文件导入时，文件里写的课程类型原名；对不上自己的类型也留着，方便以后认 */
+  importType?: string
   createdAt: number
 }
 
