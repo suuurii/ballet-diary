@@ -1,7 +1,7 @@
 import type { Entry } from '../db'
 import { startOfDay } from './time'
 
-const FALLBACK_DURATIONS = [45, 60, 90]
+const FALLBACK_DURATIONS = [30, 60, 90]
 
 /** 每天的总分钟数，key 是当天 00:00 的时间戳 */
 export function sumByDay(entries: Entry[]): Map<number, number> {

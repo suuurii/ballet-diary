@@ -1892,6 +1892,14 @@ img {
   border-color: var(--ink-3);
 }
 
+/* 填分钟数的那一格：比名字窄，数字居中 */
+.chip-input-num {
+  width: 78px;
+  padding: 0 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 动作要点 ---------- */
 
 .mv {

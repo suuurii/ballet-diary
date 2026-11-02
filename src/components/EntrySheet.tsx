@@ -1,15 +1,11 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { db, type Category, type Entry, type EntryPoint, type Movement } from '../db'
 import { CATEGORY_COLORS } from '../lib/categories'
 import { displayMove, matchScore, normName } from '../lib/movements'
 import { BALLET_TERMS } from '../lib/balletTerms'
 import { formatDuration, fromDateInput, toYMD, weekdayCN } from '../lib/time'
+import { clearDurationPresets, loadDurationPresets, saveDurationPresets } from '../lib/durations'
+import { useHoldDrag } from '../lib/holdDrag'
 import { useBlobUrls } from '../hooks/useBlobUrls'
 import { t, useLang } from '../lib/i18n'
 
@@ -178,18 +174,20 @@ export function EntrySheet({
   // 每类用过多少次、有没有手动调过顺序
   const [catUse, setCatUse] = useState<Record<number, number>>({})
   const [orderManual, setOrderManual] = useState(false)
-  const [dragId, setDragId] = useState<number | null>(null)
   const catsRef = useRef(cats)
   catsRef.current = cats
-  // 长按拖动用的临时状态：还没到时间就松手 = 普通点按；手指先动了 = 在滚动
-  const holdRef = useRef<{
-    id: number
-    startX: number
-    startY: number
-    active: boolean
-  } | null>(null)
-  // 刚拖完的那一下松手会顺带触发 click，别让它顺手选中类型
-  const suppressClick = useRef(0)
+  // 长按调顺序：类型、时长各管各的一排
+  const catDrag = useHoldDrag(catRowRef, 'data-cat-id')
+
+  // 时长快捷标签：她增删、排过就照她的名单，没动过就按常用算
+  const [presets, setPresets] = useState<number[]>(frequent)
+  const [durEdit, setDurEdit] = useState(false)
+  const [durAdding, setDurAdding] = useState(false)
+  const [durInput, setDurInput] = useState('')
+  const durRowRef = useRef<HTMLDivElement>(null)
+  const presetsRef = useRef(presets)
+  presetsRef.current = presets
+  const durDrag = useHoldDrag(durRowRef, 'data-dur')
   const [groups, setGroups] = useState<PointGroup[]>(() => groupsOf(start, movements))
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [mvQuery, setMvQuery] = useState('')
@@ -250,11 +248,40 @@ export function EntrySheet({
     el.scrollBy({ left: r.left + r.width / 2 - (c.left + c.width / 2), behavior: 'smooth' })
   }, [catEdit])
 
+  // 她排过、增删过的时长名单优先；没动过就用按常用算出来的那几个
+  useEffect(() => {
+    let alive = true
+    loadDurationPresets()
+      .then((saved) => {
+        if (!alive || !saved) return
+        setPresets(saved)
+        // 改一笔时，时长不在快捷标签里也得让她看见——把自填那一格打开
+        if (start && start.durationMin > 0) {
+          setCustomOpen(!saved.includes(start.durationMin))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [start])
+
+  // 新加的时长排在最右边，加完把它滚进视野
+  const durCount = useRef(presets.length)
+  useEffect(() => {
+    if (presets.length > durCount.current) {
+      const el = durRowRef.current
+      if (el) el.scrollTo({ left: el.scrollWidth, behavior: 'smooth' })
+    }
+    durCount.current = presets.length
+  }, [presets.length])
+
   function reset(next: Entry | null) {
     setEditing(next)
     setDateValue(toYMD(next ? next.date : date))
     setDuration(next ? next.durationMin : 0)
-    setCustomOpen(false)
+    // 时长不在快捷标签里就把自填那一格打开，让她看得见这一笔记了多少
+    setCustomOpen(!!next && next.durationMin > 0 && !presets.includes(next.durationMin))
     setCategoryId(next ? next.categoryId : null)
     setGroups(groupsOf(next, movements))
     setMvQuery('')
@@ -297,91 +324,64 @@ export function EntrySheet({
 
   /* ---------- 长按调顺序 ---------- */
 
-  /**
-   * 按住一个类型不放（0.4 秒）就能左右拖。
-   * 手指先动起来的当成在滚这一行，不算长按；拖完那一下也不会顺手选中类型。
-   */
-  function startHold(e: ReactPointerEvent<HTMLButtonElement>, c: Category) {
-    if (catEdit || c.id == null) return
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-
-    const st = { id: c.id, startX: e.clientX, startY: e.clientY, active: false }
-    holdRef.current = st
-    let timer = 0
-
-    function stop() {
-      window.clearTimeout(timer)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      window.removeEventListener('touchmove', blockScroll)
-      if (holdRef.current === st) holdRef.current = null
-    }
-
-    // 进入拖动后拦住这一行的滚动，别让页面跟着手指跑
-    function blockScroll(ev: TouchEvent) {
-      if (st.active) ev.preventDefault()
-    }
-
-    function onMove(ev: PointerEvent) {
-      if (holdRef.current !== st) return
-      if (!st.active) {
-        // 还没到时间就滑开了：她是在滚这一行
-        if (Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) > 10) stop()
-        return
-      }
-      reorderTo(ev.clientX)
-    }
-
-    function onUp() {
-      if (holdRef.current !== st) return
-      const wasActive = st.active
-      stop()
-      if (wasActive) {
-        suppressClick.current = Date.now() + 400
-        setDragId(null)
-        commitOrder()
-      }
-    }
-
-    timer = window.setTimeout(() => {
-      if (holdRef.current !== st) return
-      st.active = true
-      setDragId(c.id!)
-    }, 420)
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    window.addEventListener('touchmove', blockScroll, { passive: false })
+  /** 把一个东西挪到第几个位置（拖动的结果） */
+  function moveTo<T>(list: T[], from: number, to: number): T[] {
+    if (from < 0 || from === to || from >= list.length) return list
+    const next = [...list]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
+    return next
   }
 
-  /** 看手指到了哪两个类型中间，把正在拖的那个挪过去 */
-  function reorderTo(x: number) {
-    const hold = holdRef.current
-    const row = catRowRef.current
-    if (!hold?.active || !row) return
+  function moveCategory(id: number, to: number) {
+    setCats((prev) => moveTo(prev, prev.findIndex((c) => c.id === id), to))
+  }
 
-    // 拖到边上时让这一行自己滚一点，够得着后面的类型
-    const rr = row.getBoundingClientRect()
-    if (x < rr.left + 36) row.scrollLeft -= 10
-    else if (x > rr.right - 36) row.scrollLeft += 10
+  function movePreset(d: number, to: number) {
+    setPresets((prev) => moveTo(prev, prev.indexOf(d), to))
+  }
 
-    let to = 0
-    for (const el of Array.from(row.querySelectorAll<HTMLElement>('[data-cat-id]'))) {
-      if (Number(el.dataset.catId) === hold.id) continue
-      const r = el.getBoundingClientRect()
-      if (x > r.left + r.width / 2) to++
+  /* ---------- 时长 ---------- */
+
+  async function savePresets(next: number[]) {
+    setPresets(next)
+    try {
+      await saveDurationPresets(next)
+    } catch {
+      // 这次没存上也不影响当前这一笔
     }
+  }
 
-    setCats((prev) => {
-      const from = prev.findIndex((c) => c.id === hold.id)
-      if (from < 0 || from === to) return prev
-      const next = [...prev]
-      const [item] = next.splice(from, 1)
-      next.splice(to, 0, item)
-      return next
-    })
+  /** 编辑时长时点一下：从快捷标签里删掉（这一笔的时长不变） */
+  function removePreset(d: number) {
+    savePresets(presetsRef.current.filter((x) => x !== d))
+    // 正好选着它：标签没了，但这一笔的分钟数还在——把自填那一格打开
+    if (duration === d) setCustomOpen(true)
+  }
+
+  /** 编辑时长时用 ＋ 新建一个，排在最后；建完不自动选中，点一下才用 */
+  function addPreset() {
+    const n = Math.round(Number(durInput.trim()))
+    setDurAdding(false)
+    setDurInput('')
+    if (!Number.isFinite(n) || n <= 0 || n > 24 * 60) return
+    if (presetsRef.current.includes(n)) return
+    savePresets([...presetsRef.current, n])
+  }
+
+  /** 拖完之后把新的顺序存下来 */
+  async function commitPresetOrder() {
+    await savePresets(presetsRef.current)
+  }
+
+  /** 改回「按常用排」：名单删掉，重新按历史使用次数自动算 */
+  async function sortDurationsByUse() {
+    try {
+      await clearDurationPresets()
+    } catch {
+      // 删不掉也不影响这次排序
+    }
+    setPresets(frequent)
   }
 
   async function commitOrder() {
@@ -630,31 +630,113 @@ export function EntrySheet({
           />
 
           <div className="field">
-            <div className="label">{t('时长', 'Duration')}</div>
-            <div className="chips">
-              {frequent.map((d) => (
+            <div className="label-row">
+              <span className="label">{t('时长', 'Duration')}</span>
+              <span className="label-actions">
+                {!durEdit && (
+                  <span className="label-hint">{t('长按调顺序', 'Hold to reorder')}</span>
+                )}
+                {durEdit && (
+                  <button type="button" className="label-action" onClick={sortDurationsByUse}>
+                    {t('按常用排序', 'By use')}
+                  </button>
+                )}
                 <button
-                  key={d}
                   type="button"
-                  className={'chip' + (duration === d ? ' chip-on' : '')}
+                  className="label-action"
                   onClick={() => {
-                    setDuration(d)
-                    setCustomOpen(false)
+                    setDurEdit((v) => !v)
+                    setDurAdding(false)
+                    setDurInput('')
                   }}
                 >
-                  {t(`${d} 分`, `${d} min`)}
+                  {durEdit ? t('完成', 'Done') : t('编辑', 'Edit')}
                 </button>
-              ))}
-              <button
-                type="button"
-                className={'chip chip-plus' + (customOpen ? ' chip-on' : '')}
-                onClick={() => setCustomOpen((v) => !v)}
-                aria-label={t('自己填时长', 'Enter minutes')}
-              >
-                ＋
-              </button>
+              </span>
             </div>
-            {customOpen && (
+            <div className="chips chips-scroll" ref={durRowRef}>
+              {presets.map((d) =>
+                durEdit ? (
+                  <button
+                    key={d}
+                    type="button"
+                    className="chip chip-drop"
+                    onClick={() => removePreset(d)}
+                    aria-label={t(`删掉 ${d} 分这个快捷时长`, `Remove the ${d} min preset`)}
+                  >
+                    {t(`${d} 分`, `${d} min`)}
+                    <span className="chip-x" aria-hidden="true">
+                      ×
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    key={d}
+                    type="button"
+                    data-dur={d}
+                    className={
+                      'chip' +
+                      (duration === d ? ' chip-on' : '') +
+                      (durDrag.dragging === d ? ' chip-dragging' : '')
+                    }
+                    style={durDrag.dragging === d ? { touchAction: 'none' } : undefined}
+                    onPointerDown={(e) =>
+                      durDrag.startHold(e, d, { move: movePreset, drop: commitPresetOrder })
+                    }
+                    onClick={() => {
+                      if (Date.now() < durDrag.suppressClick.current) return
+                      setDuration(d)
+                      setCustomOpen(false)
+                    }}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    {t(`${d} 分`, `${d} min`)}
+                  </button>
+                ),
+              )}
+              {durEdit ? (
+                durAdding ? (
+                  <input
+                    className="chip chip-input chip-input-num"
+                    value={durInput}
+                    autoFocus
+                    inputMode="numeric"
+                    placeholder={t('分钟', 'min')}
+                    aria-label={t('新的常用时长（分钟）', 'New preset (minutes)')}
+                    onChange={(e) => setDurInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addPreset()
+                      } else if (e.key === 'Escape') {
+                        setDurAdding(false)
+                        setDurInput('')
+                      }
+                    }}
+                    onBlur={addPreset}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="chip chip-plus"
+                    onClick={() => setDurAdding(true)}
+                    aria-label={t('新的常用时长', 'New preset')}
+                  >
+                    ＋
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className={'chip chip-plus' + (customOpen ? ' chip-on' : '')}
+                  onClick={() => setCustomOpen((v) => !v)}
+                  aria-label={t('自己填时长', 'Enter minutes')}
+                >
+                  ＋
+                </button>
+              )}
+            </div>
+            {customOpen && !durEdit && (
               <div className="custom-dur">
                 <input
                   className="num-input"
@@ -720,12 +802,14 @@ export function EntrySheet({
                     className={
                       'chip chip-dot' +
                       (categoryId === c.id ? ' chip-on' : '') +
-                      (dragId === c.id ? ' chip-dragging' : '')
+                      (catDrag.dragging === c.id ? ' chip-dragging' : '')
                     }
-                    style={dragId === c.id ? { touchAction: 'none' } : undefined}
-                    onPointerDown={(e) => startHold(e, c)}
+                    style={catDrag.dragging === c.id ? { touchAction: 'none' } : undefined}
+                    onPointerDown={(e) =>
+                      catDrag.startHold(e, c.id!, { move: moveCategory, drop: commitOrder })
+                    }
                     onClick={() => {
-                      if (Date.now() < suppressClick.current) return
+                      if (Date.now() < catDrag.suppressClick.current) return
                       setCategoryId(categoryId === c.id ? null : c.id!)
                     }}
                     onContextMenu={(e) => e.preventDefault()}
