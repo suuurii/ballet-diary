@@ -202,11 +202,23 @@ export function SettingsPage() {
   async function importHealth(file: File) {
     setBusy(t('正在读取健康数据…', 'Reading health data…'))
     try {
-      const list = await parseHealthFile(file)
+      // 文件往往几百 MB：一边读一边报进度，别让她以为死机了
+      const mb = (n: number) => Math.round(n / 1048576)
+      const list = await parseHealthFile(file, {
+        onProgress: ({ done, total }) => {
+          if (total > 0) {
+            const pct = Math.min(99, Math.floor((done / total) * 100))
+            setBusy(t(`正在读取健康数据… ${pct}%`, `Reading health data… ${pct}%`))
+          } else {
+            setBusy(t(`正在读取健康数据… ${mb(done)} MB`, `Reading health data… ${mb(done)} MB`))
+          }
+        },
+      })
       if (list.length === 0) {
         show(t('文件里没有 Barre 类型的训练', 'No Barre workouts in this file'))
         return
       }
+      setBusy(t('正在整理…', 'Sorting…'))
       const existing = await db.entries.where('source').equals('watch').toArray()
       const seen = new Set(existing.map((e) => `${e.date}-${e.durationMin}`))
       const rows = list
@@ -355,8 +367,8 @@ export function SettingsPage() {
         <h2 className="section-label">iWatch</h2>
         <p className="hint">
           {t(
-            '在 iPhone「健康」App 里点右上角头像 →「导出所有健康数据」，把 zip 文件选进来，会自动挑出 Barre 训练。',
-            'In the iPhone Health app, tap your profile → “Export All Health Data”, then pick the zip here. Barre workouts are picked out automatically.',
+            '在 iPhone「健康」App 里点右上角头像 →「导出所有健康数据」，把 zip 文件选进来，会自动挑出 Barre 训练。文件通常有几百 MB，读取时别锁屏、别切走，等一下进度走完。',
+            'In the iPhone Health app, tap your profile → “Export All Health Data”, then pick the zip here. Barre workouts are picked out automatically. The file is often hundreds of MB — keep the screen on and stay on this page while it reads.',
           )}
         </p>
         <button className="btn btn-outline" onClick={() => healthRef.current?.click()}>
