@@ -569,7 +569,9 @@ export function EntrySheet({
         movementIds,
         points,
         images,
-        source: 'manual' as const,
+        // 改一条导入来的记录（比如补个类型）不该把它变成「手记的」，
+        // 否则「清空手表记录」会漏掉它，常用时长也会被它的怪时长带偏
+        source: editing ? editing.source : ('manual' as const),
       }
 
       if (editing) {

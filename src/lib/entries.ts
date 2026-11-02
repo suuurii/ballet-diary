@@ -34,6 +34,8 @@ export function frequentDurations(entries: Entry[], count = 3): number[] {
     freq.set(e.durationMin, (freq.get(e.durationMin) || 0) + 1)
   }
   const ranked = [...freq.entries()]
+    // 只出现过一次的（比如某天上了节特别长的课）不算「常用」，别把默认的三个挤掉
+    .filter(([, n]) => n >= 2)
     .sort((a, b) => b[1] - a[1] || a[0] - b[0])
     .map(([m]) => m)
     .slice(0, count)
