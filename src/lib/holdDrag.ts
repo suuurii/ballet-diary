@@ -1,21 +1,26 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 
-interface HoldOptions {
+interface HoldOptions<T> {
   /** 把 id 挪到第几个位置 */
-  move: (id: number, to: number) => void
+  move: (id: T, to: number) => void
   /** 松手了，把这次的顺序存下来 */
   drop: () => void
 }
 
 /**
- * 一排小标签：按住 0.4 秒就能左右拖着调顺序。
- * 手指先动起来的当成在滚这一行，不算长按；拖完那一下松手也不会顺手点中它。
- * `attr` 是每个标签身上的标记（`data-cat-id`、`data-dur`），用来量它们的位置。
+ * 一排小标签 / 一列要点：按住 0.4 秒就能拖着调顺序。
+ * `axis` 是拖的方向：类型、时长是一横排（'x'），动作要点是一竖列（'y'）。
+ * 手指先动起来的当成在滚动，不算长按；拖完那一下松手也不会顺手点中它。
+ * `attr` 是每个标签身上的标记（`data-cat-id`、`data-dur`、`data-bullet-id`），用来量它们的位置。
  */
-export function useHoldDrag(rowRef: RefObject<HTMLDivElement | null>, attr: string) {
-  const [dragging, setDragging] = useState<number | null>(null)
+export function useHoldDrag<T extends string | number>(
+  rowRef: RefObject<HTMLDivElement | null>,
+  attr: string,
+  axis: 'x' | 'y' = 'x',
+) {
+  const [dragging, setDragging] = useState<T | null>(null)
   const holdRef = useRef<{
-    id: number
+    id: T
     startX: number
     startY: number
     active: boolean
@@ -23,7 +28,11 @@ export function useHoldDrag(rowRef: RefObject<HTMLDivElement | null>, attr: stri
   // 刚拖完的那一下松手会顺带触发 click，别让它顺手选中
   const suppressClick = useRef(0)
 
-  function startHold(e: ReactPointerEvent<HTMLElement>, id: number, opts: HoldOptions) {
+  function startHold(
+    e: ReactPointerEvent<HTMLElement>,
+    id: T,
+    opts: HoldOptions<T>,
+  ) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
 
     const st = { id, startX: e.clientX, startY: e.clientY, active: false }
@@ -39,7 +48,7 @@ export function useHoldDrag(rowRef: RefObject<HTMLDivElement | null>, attr: stri
       if (holdRef.current === st) holdRef.current = null
     }
 
-    // 进入拖动后拦住这一行的滚动，别让页面跟着手指跑
+    // 进入拖动后拦住滚动，别让页面跟着手指跑
     function blockScroll(ev: TouchEvent) {
       if (st.active) ev.preventDefault()
     }
@@ -47,11 +56,11 @@ export function useHoldDrag(rowRef: RefObject<HTMLDivElement | null>, attr: stri
     function onMove(ev: PointerEvent) {
       if (holdRef.current !== st) return
       if (!st.active) {
-        // 还没到时间就滑开了：她是在滚这一行
+        // 还没到时间就滑开了：她是在滚
         if (Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) > 10) stop()
         return
       }
-      reorderTo(ev.clientX)
+      reorderTo(ev.clientX, ev.clientY)
     }
 
     function onUp() {
@@ -66,20 +75,23 @@ export function useHoldDrag(rowRef: RefObject<HTMLDivElement | null>, attr: stri
     }
 
     /** 看手指到了哪两个标签中间，把正在拖的那个挪过去 */
-    function reorderTo(x: number) {
+    function reorderTo(x: number, y: number) {
       const row = rowRef.current
       if (!st.active || !row) return
 
-      // 拖到边上时让这一行自己滚一点，够得着后面的
-      const rr = row.getBoundingClientRect()
-      if (x < rr.left + 36) row.scrollLeft -= 10
-      else if (x > rr.right - 36) row.scrollLeft += 10
+      // 横排拖到边上时让这一行自己滚一点，够得着后面的
+      if (axis === 'x') {
+        const rr = row.getBoundingClientRect()
+        if (x < rr.left + 36) row.scrollLeft -= 10
+        else if (x > rr.right - 36) row.scrollLeft += 10
+      }
 
       let to = 0
       for (const el of Array.from(row.querySelectorAll<HTMLElement>(`[${attr}]`))) {
-        if (Number(el.getAttribute(attr)) === st.id) continue
+        if (String(el.getAttribute(attr)) === String(st.id)) continue
         const r = el.getBoundingClientRect()
-        if (x > r.left + r.width / 2) to++
+        const mid = axis === 'x' ? r.left + r.width / 2 : r.top + r.height / 2
+        if ((axis === 'x' ? x : y) > mid) to++
       }
       opts.move(st.id, to)
     }

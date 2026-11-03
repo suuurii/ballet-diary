@@ -6,6 +6,9 @@ export const BALLET_TERMS: string[] = [
   // 把杆
   'demi-plié',
   'grand plié',
+  // 上课时常说的短名，单独收一条；不然打 tendu 只会出来 battement tendu
+  'plié',
+  'tendu',
   'battement tendu',
   'battement tendu jeté',
   'battement dégagé',
@@ -30,6 +33,7 @@ export const BALLET_TERMS: string[] = [
   'retiré',
   'relevé',
   'temps lié',
+  'changement',
   // 中间
   'adagio',
   'allégro',

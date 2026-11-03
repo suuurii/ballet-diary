@@ -11,6 +11,8 @@ import { t, useLang } from '../lib/i18n'
 
 /** 一条要点：level 0 是一级，1 是缩进一级的展开或举例 */
 interface Bullet {
+  /** 只在这一次编辑里用，用来认人：拖动排序、回车后把光标放回对的那一条 */
+  id: string
   text: string
   level: number
 }
@@ -26,6 +28,9 @@ interface PointGroup {
 
 let groupSeq = 0
 const nextKey = () => `g${++groupSeq}`
+
+let bulletSeq = 0
+const nextBulletId = () => `b${++bulletSeq}`
 
 const ORDER_KEY = 'categoryOrderManual'
 
@@ -70,14 +75,19 @@ function groupsOf(entry: Entry | null, movements: Movement[]): PointGroup[] {
       byId.set(p.movementId, g)
       out.push(g)
     }
-    g.bullets.push({ text: p.text, level: p.level === 1 ? 1 : 0 })
+    g.bullets.push({ id: nextBulletId(), text: p.text, level: p.level === 1 ? 1 : 0 })
   }
   // 只打了标签、还没写要点的动作，也给一条空行让她接着写
   for (const id of entry.movementIds) {
     if (byId.has(id)) continue
     const name = movements.find((m) => m.id === id)?.name
     if (!name) continue
-    out.push({ key: nextKey(), movementId: id, name, bullets: [{ text: '', level: 0 }] })
+    out.push({
+      key: nextKey(),
+      movementId: id,
+      name,
+      bullets: [{ id: nextBulletId(), text: '', level: 0 }],
+    })
   }
   return out
 }
@@ -96,22 +106,34 @@ function entrySummary(e: Entry, movements: Movement[]): string {
   return e.durationMin > 0 ? t('练习', 'Practice') : t('记录', 'Entry')
 }
 
-/** 一行要点：跟着字长高，回车再来一行 */
+/**
+ * 一行要点：跟着字长高。
+ * 回车在光标处拆成两条；Shift+回车才是同一条里换行。
+ * 光标放在行首按退格，交给外面并到上一条 / 删掉这条空行。
+ * 光标要放回哪一条也由外面说，粘贴多行时整段拆成多条。
+ */
 function PointInput({
   value,
   onChange,
   onEnter,
-  onEmptyBackspace,
+  onBackspace,
+  onIndent,
+  onPasteText,
   placeholder,
-  autoFocus,
+  focus,
+  onFocused,
   label,
 }: {
   value: string
   onChange: (v: string) => void
-  onEnter?: () => void
-  onEmptyBackspace?: () => void
+  onEnter: (start: number, end: number) => void
+  onBackspace?: () => void
+  onIndent?: (dir: 1 | -1, caret: number) => void
+  onPasteText?: (text: string, start: number, end: number) => void
   placeholder?: string
-  autoFocus?: boolean
+  /** 这次要抢光标的位置：行首、行尾，或者具体第几个字 */
+  focus?: 'start' | 'end' | number
+  onFocused?: () => void
   label: string
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -123,23 +145,59 @@ function PointInput({
     el.style.height = `${el.scrollHeight}px`
   }, [value])
 
+  useEffect(() => {
+    if (focus == null) return
+    const el = ref.current
+    if (!el) return
+    el.focus()
+    const pos = focus === 'start' ? 0 : focus === 'end' ? el.value.length : Math.min(focus, el.value.length)
+    try {
+      el.setSelectionRange(pos, pos)
+    } catch {
+      // 少数浏览器聚焦前不让设光标，停在默认位置也不影响接着打字
+    }
+    // 键盘弹起来会盖住下半屏，把刚拿到光标的那条挪进视野
+    el.scrollIntoView({ block: 'nearest' })
+    onFocused?.()
+  }, [focus])
+
   return (
     <textarea
       ref={ref}
       className="point-input"
       rows={1}
       value={value}
-      autoFocus={autoFocus}
       aria-label={label}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
+        // 中文输入法正在选字，回车是在选词，不能当成新的一条
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return
+        if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault()
-          onEnter?.()
-        } else if (e.key === 'Backspace' && !value) {
-          onEmptyBackspace?.()
+          const el = e.currentTarget
+          onEnter(el.selectionStart ?? value.length, el.selectionEnd ?? value.length)
+        } else if (e.key === 'Tab') {
+          e.preventDefault()
+          onIndent?.(e.shiftKey ? -1 : 1, e.currentTarget.selectionStart ?? value.length)
+        } else if (e.key === 'Backspace') {
+          const el = e.currentTarget
+          if (el.selectionStart === 0 && el.selectionEnd === 0) {
+            // 拦下默认的退格，不然合并完还会再吃掉上一条最后一个字
+            e.preventDefault()
+            onBackspace?.()
+          }
         }
+      }}
+      onPaste={(e) => {
+        const text = e.clipboardData.getData('text/plain')
+        // 只有「真的有两行字」才自己拆；带点空行的单行还是照默认粘进这一条
+        const lines = text.replace(/\r/g, '').split('\n').filter((s) => s.trim())
+        if (!onPasteText || lines.length < 2) return
+        // 默认粘贴会把换行塞进这一条里，拦下来自己拆成多条
+        e.preventDefault()
+        const el = e.currentTarget
+        onPasteText(text, el.selectionStart ?? value.length, el.selectionEnd ?? value.length)
       }}
     />
   )
@@ -191,7 +249,7 @@ export function EntrySheet({
   const catsRef = useRef(cats)
   catsRef.current = cats
   // 长按调顺序：类型、时长各管各的一排
-  const catDrag = useHoldDrag(catRowRef, 'data-cat-id')
+  const catDrag = useHoldDrag<number>(catRowRef, 'data-cat-id')
 
   // 时长快捷标签：她增删、排过就照她的名单，没动过就按常用算
   const [presets, setPresets] = useState<number[]>(frequent)
@@ -201,17 +259,37 @@ export function EntrySheet({
   const durRowRef = useRef<HTMLDivElement>(null)
   const presetsRef = useRef(presets)
   presetsRef.current = presets
-  const durDrag = useHoldDrag(durRowRef, 'data-dur')
+  const durDrag = useHoldDrag<number>(durRowRef, 'data-dur')
   // 一边填一边告诉她这个数被读成了多少（1.5 → 1.5h，45 → 45 分）
   const durPreview = parseDurInput(durInput)
   const [groups, setGroups] = useState<PointGroup[]>(() => groupsOf(start, movements))
-  const [focusKey, setFocusKey] = useState<string | null>(null)
+  /** 编辑完一条要点后，光标要回到哪一条、哪个位置 */
+  const [focusReq, setFocusReq] = useState<{ id: string; caret: 'start' | 'end' | number } | null>(
+    null,
+  )
+  /** 正在改名的那个动作 */
+  const [nameEdit, setNameEdit] = useState<{ key: string; draft: string } | null>(null)
+  const nameCancel = useRef(false)
+  // 长按圆点上下拖动：一次只拖一个动作底下的要点
+  const groupRows = useRef(new Map<string, HTMLDivElement | null>())
+  const dragRowRef = useRef<HTMLDivElement | null>(null)
+  const bulletDrag = useHoldDrag<string>(dragRowRef, 'data-bullet-id', 'y')
   const [mvQuery, setMvQuery] = useState('')
   const [images, setImages] = useState<Blob[]>(start ? start.images : [])
   const [hint, setHint] = useState('')
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const urls = useBlobUrls(images)
+
+  useEffect(() => () => clearTimeout(hintTimer.current), [])
+
+  /** 说一句就收回去，别让提示一直挂在面板底下 */
+  function flashHint(text: string) {
+    setHint(text)
+    clearTimeout(hintTimer.current)
+    hintTimer.current = setTimeout(() => setHint(''), 2600)
+  }
 
   // 新加的类型排在最右边，加完把它滚进视野（等这一帧画完再量宽度）
   const catCount = useRef(cats.length)
@@ -301,7 +379,8 @@ export function EntrySheet({
     setCategoryId(next ? next.categoryId : null)
     setGroups(groupsOf(next, movements))
     setMvQuery('')
-    setFocusKey(null)
+    setFocusReq(null)
+    setNameEdit(null)
     setImages(next ? next.images : [])
     setHint('')
   }
@@ -428,20 +507,20 @@ export function EntrySheet({
   /* ---------- 动作 ---------- */
 
   function addGroup(m: { id?: number; name: string }) {
+    const name = m.name.trim().replace(/\s+/g, ' ')
+    if (!name) return
     const dup = groups.some((g) =>
-      m.id != null ? g.movementId === m.id : normName(g.name) === normName(m.name),
+      m.id != null ? g.movementId === m.id : normName(g.name) === normName(name),
     )
     if (dup) {
       setMvQuery('')
       return
     }
     const key = nextKey()
-    setGroups((prev) => [
-      ...prev,
-      { key, movementId: m.id, name: m.name, bullets: [{ text: '', level: 0 }] },
-    ])
+    const first: Bullet = { id: nextBulletId(), text: '', level: 0 }
+    setGroups((prev) => [...prev, { key, movementId: m.id, name, bullets: [first] }])
     setMvQuery('')
-    setFocusKey(key)
+    setFocusReq({ id: first.id, caret: 'start' })
   }
 
   function removeGroup(g: PointGroup) {
@@ -456,55 +535,223 @@ export function EntrySheet({
     ) {
       return
     }
+    if (nameEdit?.key === g.key) setNameEdit(null)
     setGroups((prev) => prev.filter((x) => x.key !== g.key))
   }
 
-  function setBullet(key: string, i: number, text: string) {
+  /** 这一条在哪：找不到就什么也不做（比如刚被删掉） */
+  function bulletAt(key: string, id: string) {
+    const g = groups.find((x) => x.key === key)
+    const i = g ? g.bullets.findIndex((b) => b.id === id) : -1
+    return g && i >= 0 ? { g, i, b: g.bullets[i] } : null
+  }
+
+  function replaceBullets(key: string, bullets: Bullet[]) {
+    setGroups((prev) => prev.map((g) => (g.key === key ? { ...g, bullets } : g)))
+  }
+
+  function setBullet(key: string, id: string, text: string) {
     setGroups((prev) =>
       prev.map((g) =>
         g.key === key
-          ? { ...g, bullets: g.bullets.map((b, j) => (j === i ? { ...b, text } : b)) }
+          ? { ...g, bullets: g.bullets.map((b) => (b.id === id ? { ...b, text } : b)) }
           : g,
       ),
     )
   }
 
-  /** 点前面的小圆点：一级 ↔ 缩进一级 */
-  function toggleLevel(key: string, i: number) {
+  function setLevel(key: string, id: string, level: number) {
     setGroups((prev) =>
       prev.map((g) =>
         g.key === key
           ? {
               ...g,
-              bullets: g.bullets.map((b, j) =>
-                j === i ? { ...b, level: b.level > 0 ? 0 : 1 } : b,
-              ),
+              bullets: g.bullets.map((b) => (b.id === id ? { ...b, level } : b)),
             }
           : g,
       ),
     )
   }
 
+  /** 点前面的小圆点：一级 ↔ 缩进一级 */
+  function toggleLevel(key: string, id: string) {
+    const hit = bulletAt(key, id)
+    if (!hit) return
+    setLevel(key, id, hit.b.level > 0 ? 0 : 1)
+  }
+
+  /** Tab / Shift+Tab：只改这一条的层级，光标留在原处 */
+  function indentBullet(key: string, id: string, dir: 1 | -1, caret: number) {
+    const hit = bulletAt(key, id)
+    if (!hit) return
+    const level = Math.max(0, Math.min(1, hit.b.level + dir))
+    if (level !== hit.b.level) setLevel(key, id, level)
+    // 层级变了会重画，把光标再放回原处，别让她重新点
+    setFocusReq({ id, caret })
+  }
+
+  /**
+   * 回车：在光标处把这行拆成两条，新的紧跟在下面。
+   * - 行首回车：在上面插一条空的，原文不动
+   * - 空行回车：缩进的就退回一级；一级的空行就收掉，焦点回上一条
+   * - 新的一条跟着当前这条的层级走，缩进里回车还是缩进的
+   */
+  function handleEnter(key: string, id: string, start: number, end: number) {
+    const hit = bulletAt(key, id)
+    if (!hit) return
+    const { g, i, b } = hit
+
+    if (!b.text.trim()) {
+      if (b.level > 0) {
+        setLevel(key, id, 0)
+        setFocusReq({ id, caret: 'end' })
+        return
+      }
+      if (g.bullets.length > 1) {
+        const back = g.bullets[i - 1] ?? g.bullets[i + 1]
+        replaceBullets(
+          key,
+          g.bullets.filter((x) => x.id !== id),
+        )
+        setFocusReq({ id: back.id, caret: i > 0 ? 'end' : 'start' })
+      }
+      return
+    }
+
+    if (start === 0 && end === 0) {
+      const nb: Bullet = { id: nextBulletId(), text: '', level: b.level }
+      const bullets = [...g.bullets]
+      bullets.splice(i, 0, nb)
+      replaceBullets(key, bullets)
+      setFocusReq({ id: nb.id, caret: 'start' })
+      return
+    }
+
+    // 选中的那一段回车就没了，和普通输入框一样
+    const nb: Bullet = { id: nextBulletId(), text: b.text.slice(end), level: b.level }
+    const bullets = g.bullets.map((x, j) => (j === i ? { ...x, text: b.text.slice(0, start) } : x))
+    bullets.splice(i + 1, 0, nb)
+    replaceBullets(key, bullets)
+    setFocusReq({ id: nb.id, caret: 'start' })
+  }
+
+  /**
+   * 光标在行首按退格：有字就并到上一条，空行就删掉，
+   * 两种情况焦点都回到上一条的末尾。
+   */
+  function handleBackspace(key: string, id: string) {
+    const hit = bulletAt(key, id)
+    if (!hit) return
+    const { g, i, b } = hit
+    if (i === 0) return
+    const prev = g.bullets[i - 1]
+
+    if (!b.text) {
+      replaceBullets(
+        key,
+        g.bullets.filter((x) => x.id !== id),
+      )
+      setFocusReq({ id: prev.id, caret: 'end' })
+      return
+    }
+
+    const join = prev.text.length
+    replaceBullets(
+      key,
+      g.bullets
+        .map((x) => (x.id === prev.id ? { ...x, text: x.text + b.text } : x))
+        .filter((x) => x.id !== id),
+    )
+    setFocusReq({ id: prev.id, caret: join })
+  }
+
+  /** 粘贴一整段多行的文字：一行一条要点，行首的 - / • / 1. 都去掉 */
+  function handlePaste(key: string, id: string, text: string, start: number, end: number) {
+    const hit = bulletAt(key, id)
+    if (!hit) return
+    const { g, i, b } = hit
+    const lines = text
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => line.replace(/^\s*(?:[-*•·–—]|\d+[.)])\s+/, '').trim())
+    while (lines.length && !lines[0]) lines.shift()
+    while (lines.length && !lines[lines.length - 1]) lines.pop()
+    if (lines.length <= 1) return
+
+    const before = b.text.slice(0, start)
+    const after = b.text.slice(end)
+    const made: Bullet[] = lines
+      .slice(1)
+      .map((line) => ({ id: nextBulletId(), text: line, level: b.level }))
+    made[made.length - 1].text += after
+
+    const bullets = g.bullets.map((x, j) => (j === i ? { ...x, text: before + lines[0] } : x))
+    bullets.splice(i + 1, 0, ...made)
+    replaceBullets(key, bullets)
+    setFocusReq({ id: made[made.length - 1].id, caret: 'end' })
+  }
+
+  /** 「＋ 一条」：在这个动作的最后加一条，层级跟着最后一条 */
   function addBullet(key: string) {
+    const g = groups.find((x) => x.key === key)
+    if (!g) return
+    const nb: Bullet = {
+      id: nextBulletId(),
+      text: '',
+      level: g.bullets[g.bullets.length - 1]?.level ?? 0,
+    }
+    replaceBullets(key, [...g.bullets, nb])
+    setFocusReq({ id: nb.id, caret: 'start' })
+  }
+
+  /** 长按圆点拖动：把这条要点挪到第几个位置 */
+  function moveBullet(key: string, id: string, to: number) {
     setGroups((prev) =>
       prev.map((g) => {
         if (g.key !== key) return g
-        // 新的一行跟着上一行的层级走：在缩进的那条下面回车，还是缩进的
-        const level = g.bullets[g.bullets.length - 1]?.level ?? 0
-        return { ...g, bullets: [...g.bullets, { text: '', level }] }
+        const from = g.bullets.findIndex((b) => b.id === id)
+        if (from < 0) return g
+        const next = [...g.bullets]
+        const [item] = next.splice(from, 1)
+        next.splice(Math.max(0, Math.min(to, next.length)), 0, item)
+        return { ...g, bullets: next }
       }),
     )
-    setFocusKey(key)
   }
 
-  function dropBullet(key: string, i: number) {
-    setGroups((prev) =>
-      prev.map((g) =>
-        g.key === key && g.bullets.length > 1
-          ? { ...g, bullets: g.bullets.filter((_, j) => j !== i) }
-          : g,
-      ),
-    )
+  /**
+   * 改动作名：存着的动作名是所有记录共用的，改了就一起改；
+   * 只有这一条记录用到它时不用问，多条记录共用的先说清后果再改。
+   */
+  async function commitName(g: PointGroup) {
+    const pending = nameEdit
+    if (!pending || pending.key !== g.key) return
+    setNameEdit(null)
+    const name = pending.draft.trim().replace(/\s+/g, ' ')
+    if (!name || normName(name) === normName(g.name)) return
+    if (groups.some((x) => x.key !== g.key && normName(x.name) === normName(name))) {
+      flashHint(t('这个动作已经在上面了', 'That movement is already in this entry'))
+      return
+    }
+    if (g.movementId != null) {
+      try {
+        const used = await db.entries.where('movementIds').equals(g.movementId).count()
+        if (
+          used > 1 &&
+          !window.confirm(
+            t(
+              `「${displayMove(g.name)}」在 ${used} 条记录里都有。改名后这 ${used} 条会一起变成「${displayMove(name)}」。`,
+              `“${displayMove(g.name)}” appears in ${used} entries. They will all be renamed to “${displayMove(name)}”.`,
+            ),
+          )
+        ) {
+          return
+        }
+      } catch {
+        // 数不出来就不多问，照常改
+      }
+    }
+    setGroups((prev) => prev.map((x) => (x.key === g.key ? { ...x, name } : x)))
   }
 
   const candidates = useMemo(() => {
@@ -537,10 +784,11 @@ export function EntrySheet({
   }, [movements, groups, mvQuery])
 
   const newName = mvQuery.trim()
+  // 重音不算区别：打 developpe 就等于 déjà 有 développé，不必再建一个
   const canCreate =
     newName.length > 0 &&
-    !candidates.some((m) => m.name.toLowerCase() === newName.toLowerCase()) &&
-    !groups.some((g) => g.name.toLowerCase() === newName.toLowerCase())
+    !candidates.some((m) => normName(m.name) === normName(newName)) &&
+    !groups.some((g) => normName(g.name) === normName(newName))
 
   /* ---------- 保存 ---------- */
 
@@ -562,15 +810,32 @@ export function EntrySheet({
     try {
       const movementIds: number[] = []
       const points: EntryPoint[] = []
+      /** 在面板里改过名字的动作，保存时一起改掉（所有记录共用这个名字） */
+      const renamed: string[] = []
       for (const g of groups) {
+        const name = g.name.trim().replace(/\s+/g, ' ')
         let id = g.movementId
-        if (id == null) {
-          const existing = movements.find((m) => normName(m.name) === normName(g.name))
-          id = existing
-            ? existing.id!
-            : await db.movements.add({ name: g.name, createdAt: Date.now() })
+
+        if (id != null) {
+          const lib = movements.find((m) => m.id === id)
+          if (lib && normName(lib.name) !== normName(name)) {
+            // 库里已经有同名的动作：改用那一个，不造两个一样的
+            const same = movements.find((m) => m.id !== id && normName(m.name) === normName(name))
+            if (same) {
+              id = same.id!
+            } else {
+              await db.movements.update(id, { name })
+              renamed.push(name)
+            }
+          }
         }
-        movementIds.push(id)
+
+        if (id == null) {
+          const existing = movements.find((m) => normName(m.name) === normName(name))
+          id = existing ? existing.id! : await db.movements.add({ name, createdAt: Date.now() })
+        }
+
+        if (!movementIds.includes(id)) movementIds.push(id)
         for (const b of g.bullets) {
           const text = b.text.trim()
           if (text) points.push({ movementId: id, text, ...(b.level > 0 ? { level: b.level } : {}) })
@@ -595,7 +860,13 @@ export function EntrySheet({
       } else {
         await db.entries.add({ ...payload, note: '', createdAt: Date.now() })
       }
-      onSaved(editing ? t('已保存', 'Saved') : t('记下了', 'Noted'))
+      onSaved(
+        renamed.length > 0
+          ? t('已保存，动作名也一起改了', 'Saved — movement renamed everywhere')
+          : editing
+            ? t('已保存', 'Saved')
+            : t('记下了', 'Noted'),
+      )
     } catch (err) {
       console.error(err)
       setHint(t('保存失败，再试一次', 'Could not save — try again'))
@@ -881,14 +1152,56 @@ export function EntrySheet({
             <div className="label-row">
               <span className="label">{t('动作 & 手记', 'Movements & notes')}</span>
               {groups.length > 0 && (
-                <span className="label-hint">{t('点圆点缩进', 'Tap a dot to indent')}</span>
+                <span className="label-hint">
+                  {t(
+                    '点名字改名 · 圆点缩进 · 长按拖动',
+                    'Tap name to rename · dot to indent · hold to drag',
+                  )}
+                </span>
               )}
             </div>
 
             {groups.map((g) => (
               <div className="mv" key={g.key}>
                 <div className="mv-head">
-                  <span className="mv-name">{displayMove(g.name)}</span>
+                  {nameEdit?.key === g.key ? (
+                    <input
+                      className="mv-name-input"
+                      value={nameEdit.draft}
+                      autoFocus
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      aria-label={t('动作名', 'Movement name')}
+                      onChange={(e) => setNameEdit({ key: g.key, draft: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          e.currentTarget.blur()
+                        } else if (e.key === 'Escape') {
+                          nameCancel.current = true
+                          e.currentTarget.blur()
+                        }
+                      }}
+                      onBlur={() => {
+                        if (nameCancel.current) {
+                          nameCancel.current = false
+                          setNameEdit(null)
+                        } else {
+                          commitName(g)
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="mv-name"
+                      onClick={() => setNameEdit({ key: g.key, draft: g.name })}
+                      aria-label={t(`修改动作名 ${g.name}`, `Rename ${g.name}`)}
+                    >
+                      {displayMove(g.name)}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="mv-x"
@@ -898,31 +1211,63 @@ export function EntrySheet({
                     ×
                   </button>
                 </div>
-                {g.bullets.map((b, i) => (
-                  <div className={'point' + (b.level > 0 ? ' point-sub' : '')} key={i}>
-                    <button
-                      type="button"
-                      className={'point-mark' + (b.level > 0 ? ' point-mark-sub' : '')}
-                      onClick={() => toggleLevel(g.key, i)}
-                      aria-label={
-                        b.level > 0
-                          ? t('这一条取消缩进', 'Outdent this line')
-                          : t('这一条缩进一级', 'Indent this line')
+
+                <div
+                  className="mv-points"
+                  ref={(el) => {
+                    groupRows.current.set(g.key, el)
+                  }}
+                >
+                  {g.bullets.map((b, i) => (
+                    <div
+                      className={
+                        'point' +
+                        (b.level > 0 ? ' point-sub' : '') +
+                        (bulletDrag.dragging === b.id ? ' point-dragging' : '')
                       }
+                      key={b.id}
+                      data-bullet-id={b.id}
                     >
-                      {b.level > 0 ? '↳' : '•'}
-                    </button>
-                    <PointInput
-                      value={b.text}
-                      label={t(`${g.name} 第 ${i + 1} 条要点`, `${g.name} point ${i + 1}`)}
-                      placeholder={i === 0 ? t('这个动作的要点', 'What to remember') : ''}
-                      autoFocus={focusKey === g.key && i === g.bullets.length - 1}
-                      onChange={(v) => setBullet(g.key, i, v)}
-                      onEnter={() => addBullet(g.key)}
-                      onEmptyBackspace={() => dropBullet(g.key, i)}
-                    />
-                  </div>
-                ))}
+                      <button
+                        type="button"
+                        className={'point-mark' + (b.level > 0 ? ' point-mark-sub' : '')}
+                        onPointerDown={(e) => {
+                          dragRowRef.current = groupRows.current.get(g.key) ?? null
+                          bulletDrag.startHold(e, b.id, {
+                            move: (id, to) => moveBullet(g.key, id, to),
+                            drop: () => {},
+                          })
+                        }}
+                        onClick={() => {
+                          if (Date.now() < bulletDrag.suppressClick.current) return
+                          toggleLevel(g.key, b.id)
+                        }}
+                        aria-label={
+                          b.level > 0
+                            ? t('这一条取消缩进（长按可上下拖动）', 'Outdent this line (hold to drag)')
+                            : t('这一条缩进一级（长按可上下拖动）', 'Indent this line (hold to drag)')
+                        }
+                      >
+                        {b.level > 0 ? '↳' : '•'}
+                      </button>
+                      <PointInput
+                        value={b.text}
+                        label={t(`${g.name} 第 ${i + 1} 条要点`, `${g.name} point ${i + 1}`)}
+                        placeholder={i === 0 ? t('这个动作的要点', 'What to remember') : ''}
+                        focus={focusReq?.id === b.id ? focusReq.caret : undefined}
+                        onFocused={() => setFocusReq(null)}
+                        onChange={(v) => setBullet(g.key, b.id, v)}
+                        onEnter={(start, end) => handleEnter(g.key, b.id, start, end)}
+                        onBackspace={() => handleBackspace(g.key, b.id)}
+                        onIndent={(dir, caret) => indentBullet(g.key, b.id, dir, caret)}
+                        onPasteText={(text, start, end) =>
+                          handlePaste(g.key, b.id, text, start, end)
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+
                 <button type="button" className="mv-add" onClick={() => addBullet(g.key)}>
                   {t('＋ 一条', '＋ point')}
                 </button>
@@ -933,6 +1278,9 @@ export function EntrySheet({
               <input
                 className="tag-input"
                 value={mvQuery}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 onChange={(e) => setMvQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -960,11 +1308,11 @@ export function EntrySheet({
                     {displayMove(m.name)}
                   </button>
                 ))}
-                {/* 已经有对得上的动作时，「新建」就别挤在旁边了 */}
-                {canCreate && candidates.length === 0 && (
+                {/* 候选里没有一模一样的，就给她一个字不差的入口，不要只给最像的 */}
+                {canCreate && (
                   <button
                     type="button"
-                    className="chip chip-quiet"
+                    className="chip chip-quiet chip-create"
                     onClick={() => addGroup({ name: newName })}
                   >
                     {t(`新建「${newName}」`, `Create “${newName}”`)}

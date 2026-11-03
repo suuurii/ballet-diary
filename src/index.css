@@ -1449,6 +1449,99 @@ img {
   color: var(--ink-3);
 }
 
+/* 搜索：一颗安静的玻璃胶囊 */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 12px;
+  padding: 0 8px 0 14px;
+  min-height: 44px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  transition: border-color 0.15s ease;
+}
+
+.search-field:focus-within {
+  border-color: var(--rose);
+}
+
+.search-field > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  padding: 11px 0;
+  font-size: 15px;
+  color: var(--ink);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.search-field input::placeholder {
+  color: var(--ink-3);
+}
+
+/* Safari 自带的清除叉别跟右边那颗重复 */
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-clear {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--ink-3);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.search-clear::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+.search-clear:active {
+  background: var(--rose-soft);
+  color: var(--rose-deep);
+}
+
+/* 搜到的字：只染底色，不抢正文 */
+.note mark {
+  background: var(--rose-soft);
+  color: var(--rose-deep);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.empty-inline {
+  margin: 0;
+}
+
+.text-link {
+  margin-top: 2px;
+  padding: 11px 0;
+  color: var(--rose);
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
 /* ---------- 笔记 ---------- */
 
 .notes {
@@ -1555,6 +1648,8 @@ img {
   font-size: 14.5px;
   line-height: 1.7;
   word-break: break-word;
+  /* Shift+回车在同一条里换的行，回看时也照原样断 */
+  white-space: pre-wrap;
 }
 
 .note-points li + li {
@@ -2065,16 +2160,44 @@ img {
 
 .mv-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 2px;
 }
 
+/* 动作名点一下就能改；平时看着就是一行字，不是按钮 */
 .mv-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-align: left;
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mv-name:active {
+  color: var(--rose);
+}
+
+.mv-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 0;
+  border: 0;
+  border-bottom: 1px solid var(--rose);
+  background: none;
+  font: inherit;
   font-size: 13px;
   letter-spacing: 0.04em;
   color: var(--ink);
+}
+
+.mv-name-input:focus {
+  outline: none;
 }
 
 .mv-x {
@@ -2094,31 +2217,39 @@ img {
 .point {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
-  min-height: 24px;
+  gap: 6px;
+  min-height: 26px;
 }
 
-/* 要点前面的小圆点：点它就把这一条缩进一级 / 收回来 */
+.point-dragging {
+  opacity: 0.55;
+}
+
+/* 要点前面的小圆点：点它缩进一级 / 收回来，长按 0.4 秒可以上下拖动排序 */
 .point-mark {
   position: relative;
   flex: none;
-  width: 11px;
-  padding: 0;
+  width: 16px;
+  padding: 1px 0;
   border: 0;
   background: none;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
-  text-align: right;
+  text-align: center;
   color: var(--rose);
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  /* 从这个圆点上按住拖，不要被当成在滚页面 */
+  touch-action: none;
 }
 
-/* 圆点本身很小，手指的可点范围往外撑一圈 */
+/* 圆点本身很小，手指的可点范围往外撑一圈（上下相邻两条不互相盖住） */
 .point-mark::after {
   content: '';
   position: absolute;
-  inset: -8px -11px -8px -9px;
+  inset: -4px -9px;
 }
 
 .point-mark-sub {
@@ -2128,7 +2259,13 @@ img {
 }
 
 .point-sub {
-  padding-left: 15px;
+  padding-left: 16px;
+}
+
+/* 候选旁边那个「新建」：虚线，和已有动作分得开 */
+.chip-create {
+  border-style: dashed;
+  color: var(--ink-2);
 }
 
 .point-sub .point-input {
