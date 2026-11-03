@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { db, type Category, type Entry, type Movement } from '../db'
 import { entriesOnDay, frequentDurations, isNote } from '../lib/entries'
 import { formatDuration, fromDateInput, monthCN, pad2, startOfDay, weekdayCN } from '../lib/time'
@@ -9,7 +9,7 @@ import { LangToggle } from '../components/LangToggle'
 import { Toast } from '../components/Toast'
 import { useToast } from '../hooks/useToast'
 import { t, useLang } from '../lib/i18n'
-import { displayMove } from '../lib/movements'
+import { displayMove, normName } from '../lib/movements'
 
 type TimeFilter = 'thisMonth' | 'lastMonth' | 'thisYear' | 'all' | 'custom'
 
@@ -43,11 +43,41 @@ function inRange(e: Entry, filter: TimeFilter, from: string, to: string): boolea
   }
 }
 
+/** 这条记录里能搜到的字：动作名、每个要点、这节课的话 */
+function searchText(e: Entry, movements: Movement[]): string {
+  const names = e.movementIds.map((id) => movements.find((m) => m.id === id)?.name || '')
+  const points = (e.points || []).map((p) => p.text)
+  return normName([...names, ...points, e.note].join('\n'))
+}
+
+/** 把搜到的字圈出来。重音打不打都能搜到；情况太绕时就不圈，只保证搜得到 */
+function Highlight({ text, q }: { text: string; q: string }) {
+  if (!q) return <>{text}</>
+  const lower = text.toLowerCase()
+  const needle = q.toLowerCase()
+  if (!needle || !lower.includes(needle)) return <>{text}</>
+  const out: ReactNode[] = []
+  let from = 0
+  let k = 0
+  for (;;) {
+    const at = lower.indexOf(needle, from)
+    if (at < 0) {
+      out.push(text.slice(from))
+      break
+    }
+    if (at > from) out.push(text.slice(from, at))
+    out.push(<mark key={k++}>{text.slice(at, at + needle.length)}</mark>)
+    from = at + needle.length
+  }
+  return <>{out}</>
+}
+
 function NoteCard({
   entry,
   movements,
   categories,
   picked,
+  q,
   onOpen,
   onView,
 }: {
@@ -56,6 +86,8 @@ function NoteCard({
   categories: Category[]
   /** 筛了动作就只展开这几个动作的要点，整节课的话压暗 */
   picked: Set<number>
+  /** 搜索词：非空时把搜到的字圈出来 */
+  q: string
   onOpen: () => void
   onView: (url: string) => void
 }) {
@@ -96,7 +128,14 @@ function NoteCard({
         <span className="note-meta">
           {/* 下面按动作分段时不再重复列名字 */}
           {names.length > 0 && allBlocks.length === 0 && (
-            <span className="note-moves">{names.join(' · ')}</span>
+            <span className="note-moves">
+              {names.map((n, i) => (
+                <span key={i}>
+                  {i > 0 && ' · '}
+                  <Highlight text={n} q={q} />
+                </span>
+              ))}
+            </span>
           )}
           {entry.durationMin > 0 && (
             <span className="note-dur">{formatDuration(entry.durationMin)}</span>
@@ -113,11 +152,13 @@ function NoteCard({
         <div className="note-points">
           {blocks.map((b) => (
             <div className="note-points-block" key={b.id}>
-              <div className="note-points-title">{b.name}</div>
+              <div className="note-points-title">
+                <Highlight text={b.name} q={q} />
+              </div>
               <ul>
                 {b.lines.map((line, i) => (
                   <li key={i} className={line.level > 0 ? 'is-sub' : undefined}>
-                    {line.text}
+                    <Highlight text={line.text} q={q} />
                   </li>
                 ))}
               </ul>
@@ -129,8 +170,10 @@ function NoteCard({
       {classLines.length > 0 && (
         <div className={'note-points' + (picked.size > 0 ? ' is-muted' : '')}>
           <ul>
-            {classLines.map((t, i) => (
-              <li key={i}>{t}</li>
+            {classLines.map((line, i) => (
+              <li key={i}>
+                <Highlight text={line} q={q} />
+              </li>
             ))}
           </ul>
         </div>
@@ -162,6 +205,8 @@ export function NotesPage() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [picked, setPicked] = useState<Set<number>>(new Set())
+  // 搜索：在现在的时间 / 动作筛选里找。搜不到时会提示换到「全部」再找
+  const [query, setQuery] = useState('')
   const [sheet, setSheet] = useState<Entry | null>(null)
   // 从笔记页也能直接记一笔，默认记在今天
   const [adding, setAdding] = useState<number | null>(null)
@@ -185,12 +230,18 @@ export function NotesPage() {
   }, [])
 
   const notes = useMemo(() => {
+    const needle = normName(query.trim())
     return entries
       .filter((e) => isNote(e))
+      .filter((e) => !needle || searchText(e, movements).includes(needle))
       .filter((e) => inRange(e, filter, from, to))
       .filter((e) => picked.size === 0 || e.movementIds.some((id) => picked.has(id)))
       .sort((a, b) => b.date - a.date || b.createdAt - a.createdAt)
-  }, [entries, filter, from, to, picked])
+  }, [entries, movements, query, filter, from, to, picked])
+
+  // 一条笔记都没有时，搜索框先不出现，免得像在空房间里喊
+  const hasAnyNote = useMemo(() => entries.some(isNote), [entries])
+  const q = query.trim()
 
   const frequent = useMemo(() => frequentDurations(entries), [entries])
 
@@ -238,6 +289,39 @@ export function NotesPage() {
           'What you wrote this month, and where each movement got stuck.',
         )}
       </p>
+
+      {hasAnyNote && (
+        <div className="search-field">
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="6.8" cy="6.8" r="4.9" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+              else if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            placeholder={t('搜动作、搜要点里的字', 'Search movements and notes')}
+            aria-label={t('搜索笔记', 'Search notes')}
+            enterKeyHint="search"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          {query && (
+            <button
+              className="search-clear"
+              onClick={() => setQuery('')}
+              aria-label={t('清空搜索', 'Clear search')}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="chips chips-scroll filter-row">
         {(Object.keys(TIME_LABEL) as TimeFilter[]).map((key) => (
@@ -291,7 +375,9 @@ export function NotesPage() {
 
       <div className="notes-tools">
         <span className="count">
-          {t(`${notes.length} 条笔记`, `${notes.length} notes`)}
+          {q
+            ? t(`搜到 ${notes.length} 条`, `${notes.length} found`)
+            : t(`${notes.length} 条笔记`, `${notes.length} notes`)}
         </span>
         {notes.length > 0 && (
           <button className="notes-export" onClick={() => setExporting(true)}>
@@ -301,12 +387,25 @@ export function NotesPage() {
       </div>
 
       {notes.length === 0 ? (
-        <p className="empty">
-          {t(
-            '这个范围里还没有笔记。换个时间，或者点右上角「记一笔」。',
-            'No notes in this range. Try another period, or tap “New entry”.',
-          )}
-        </p>
+        q ? (
+          <div className="empty">
+            <p className="empty-inline">
+              {t(`没有找到「${q}」。`, `Nothing found for “${q}”.`)}
+            </p>
+            {filter !== 'all' && (
+              <button className="text-link" onClick={() => setFilter('all')}>
+                {t('在全部时间里再找一次 ›', 'Search all time ›')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="empty">
+            {t(
+              '这个范围里还没有笔记。换个时间，或者点右上角「记一笔」。',
+              'No notes in this range. Try another period, or tap “New entry”.',
+            )}
+          </p>
+        )
       ) : (
         <div className="notes">
           {notes.map((e) => {
@@ -327,6 +426,7 @@ export function NotesPage() {
                   movements={movements}
                   categories={categories}
                   picked={picked}
+                  q={q}
                   onOpen={() => setSheet(e)}
                   onView={setViewing}
                 />
