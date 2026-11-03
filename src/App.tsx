@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ensureSeedCategories } from './lib/categories'
 import { t, useLang } from './lib/i18n'
 import { migrateLegacy } from './lib/migrate'
+import { warmUpCoin } from './lib/sound'
 import { CalendarPage } from './pages/CalendarPage'
 import { NotesPage } from './pages/NotesPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -58,6 +59,9 @@ export default function App() {
 
   // 首屏立刻渲染；种子分类和旧数据迁移在后台完成，完成后通知页面重新取数
   useEffect(() => {
+    // 先把记花费那声「叮」读进来，按「记下这笔」时才不用等
+    warmUpCoin()
+
     let alive = true
     ;(async () => {
       try {

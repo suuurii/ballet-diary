@@ -14,7 +14,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE)
-      await cache.addAll(['/manifest.webmanifest', '/icon-180.png', '/icon-512.png']).catch(() => {})
+      // 记花费那声「叮」也一起存下：在舞房没信号时记账，照样响
+      await cache
+        .addAll(['/manifest.webmanifest', '/icon-180.png', '/icon-512.png', '/sounds/money.mp3'])
+        .catch(() => {})
       try {
         // 把当前这一版的页面和它引用的 js/css 一起存下来，
         // 这样第一次联网打开过，之后就能离线开

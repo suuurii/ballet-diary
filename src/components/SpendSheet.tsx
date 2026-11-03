@@ -4,6 +4,7 @@ import { loadSpendCats, money, saveSpendCats, spendDay } from '../lib/spend'
 import { pad2 } from '../lib/time'
 import { t, useLang } from '../lib/i18n'
 import { useToast } from '../hooks/useToast'
+import { playCoin } from '../lib/sound'
 import { Toast } from './Toast'
 
 function isoOf(ms: number): string {
@@ -112,6 +113,8 @@ export function SpendSheet({
       show(t('先填个金额', 'Enter an amount first'))
       return
     }
+    // 新记一笔才响；改旧账不响。放在 await 之前，iPhone 才允许出声
+    if (!editing) playCoin()
     setBusy(true)
     try {
       const row = {
