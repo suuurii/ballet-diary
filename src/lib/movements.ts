@@ -1,11 +1,14 @@
 const SEP_SPLIT = /[\s'’\-.,]+/
 const SEP_ALL = /[\s'’\-.,]+/g
 
-/** 显示用：首字母大写，`relevé` → `Relevé`、`rond de jambe` → `Rond de jambe`。不改正存着的名字 */
+/**
+ * 显示用：每个词的首字母大写，`relevé` → `Relevé`、`rond de jambe` → `Rond De Jambe`。
+ * 只改首字母，不管它本来是大写还是小写——手机键盘自动把开头大写时，
+ * `Changement` 不该再被改成 `CHangement`。空格、撇号、连字符后面都算新词。
+ * 只改显示，不动她自己存的名字。
+ */
 export function displayMove(name: string): string {
-  const i = name.search(/[a-zà-öø-ÿ]/)
-  if (i < 0) return name
-  return name.slice(0, i) + name[i].toUpperCase() + name.slice(i + 1)
+  return name.replace(/(^|[\s'’\-.,·/])(\p{L})/gu, (_, sep: string, ch: string) => sep + ch.toUpperCase())
 }
 
 /** 法文名字带音符，打字时多半不打，比之前先去干净；也用来判断两个名字是不是同一个 */
